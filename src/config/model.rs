@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
 
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -270,6 +273,9 @@ pub struct SessionConfig {
     pub resume_agents_on_restore: bool,
     /// Milliseconds between automatic agent restores. Zero disables spacing.
     pub startup_per_agent_delay_ms: u32,
+    /// Extra arguments inserted after the agent executable when resuming a
+    /// native agent session, keyed by agent label. Default: empty.
+    pub resume_extra_args: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for SessionConfig {
@@ -277,6 +283,7 @@ impl Default for SessionConfig {
         Self {
             resume_agents_on_restore: true,
             startup_per_agent_delay_ms: 100,
+            resume_extra_args: BTreeMap::new(),
         }
     }
 }
@@ -1444,6 +1451,28 @@ startup_per_agent_delay_ms = 0
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
         assert_eq!(config.session.startup_per_agent_delay_ms, 0);
+    }
+
+    #[test]
+    fn resume_extra_args_defaults_empty_and_parses_per_agent() {
+        assert!(Config::default().session.resume_extra_args.is_empty());
+
+        let toml = r#"
+[session.resume_extra_args]
+claude = ["--dangerously-skip-permissions"]
+codex = ["--dangerously-bypass-approvals-and-sandbox"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.session.resume_extra_args.get("claude"),
+            Some(&vec!["--dangerously-skip-permissions".to_string()])
+        );
+        assert_eq!(
+            config.session.resume_extra_args.get("codex"),
+            Some(&vec![
+                "--dangerously-bypass-approvals-and-sandbox".to_string()
+            ])
+        );
     }
 
     #[test]

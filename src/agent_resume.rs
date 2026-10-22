@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -196,12 +198,37 @@ pub fn session_ref_from_snapshot(
     })
 }
 
+/// Extra arguments from `[session.resume_extra_args]`, keyed by agent label.
+static RESUME_EXTRA_ARGS: RwLock<BTreeMap<String, Vec<String>>> = RwLock::new(BTreeMap::new());
+
+pub(crate) fn set_resume_extra_args(extra_args: BTreeMap<String, Vec<String>>) {
+    if let Ok(mut current) = RESUME_EXTRA_ARGS.write() {
+        *current = extra_args;
+    }
+}
+
 pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+    let extra_args = RESUME_EXTRA_ARGS
+        .read()
+        .ok()
+        .and_then(|extra_args| extra_args.get(agent).cloned())
+        .unwrap_or_default();
+    plan_with_extra_args(source, agent, session_ref, &extra_args)
+}
+
+/// Inserts `extra_args` right after the executable, so they also reach agents
+/// whose resume is a subcommand: `codex --yolo resume <id>`.
+pub fn plan_with_extra_args(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    extra_args: &[String],
+) -> Option<AgentResumePlan> {
     if !is_official_agent_source(source, agent) {
         return None;
     }
 
-    let argv = match (source, agent, session_ref.kind) {
+    let mut argv = match (source, agent, session_ref.kind) {
         ("herdr:claude", "claude", AgentSessionRefKind::Id) => {
             vec![
                 "claude".into(),
@@ -310,6 +337,17 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
         }
         _ => return None,
     };
+
+    if !extra_args.is_empty() {
+        let mut with_extra_args = argv.clone();
+        with_extra_args.splice(1..1, extra_args.iter().cloned());
+        match validate_resume_argv(&with_extra_args) {
+            Ok(()) => argv = with_extra_args,
+            Err(err) => {
+                tracing::warn!(agent, err = %err, "ignoring session.resume_extra_args");
+            }
+        }
+    }
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
@@ -446,6 +484,63 @@ mod tests {
                 "resume".into(),
                 "remote-session".into(),
             ]
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn planner_inserts_extra_args_after_executable() {
+        assert_eq!(
+            plan_with_extra_args(
+                "herdr:claude",
+                "claude",
+                &AgentSessionRef::id("claude-session").unwrap(),
+                &argv(&["--dangerously-skip-permissions"]),
+            )
+            .unwrap()
+            .argv,
+            vec![
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session"
+            ]
+        );
+        assert_eq!(
+            plan_with_extra_args(
+                "herdr:codex",
+                "codex",
+                &AgentSessionRef::id("codex-session").unwrap(),
+                &argv(&["--dangerously-bypass-approvals-and-sandbox"]),
+            )
+            .unwrap()
+            .argv,
+            vec![
+                "codex",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "codex-session"
+            ]
+        );
+    }
+
+    #[test]
+    fn planner_ignores_extra_args_that_cannot_be_typed_safely() {
+        let session = AgentSessionRef::id("claude-session").unwrap();
+        for extra_args in [argv(&["it's"]), argv(&["--model\nopus"])] {
+            assert_eq!(
+                plan_with_extra_args("herdr:claude", "claude", &session, &extra_args)
+                    .unwrap()
+                    .argv,
+                vec!["claude", "--resume", "claude-session"],
+                "{extra_args:?}"
+            );
+        }
+        assert!(plan_with_extra_args(
+            "custom:claude",
+            "claude",
+            &session,
+            &argv(&["--dangerously-skip-permissions"])
         )
         .is_none());
     }

@@ -1441,6 +1441,12 @@
           "type": "integer",
           "default": "100",
           "description": "Milliseconds between automatic agent restores after a server restart. The first agent starts without this delay; 0 disables spacing. Does not delay manual launches or explicit terminal attaches. Restart the server to apply."
+        },
+        {
+          "key": "session.resume_extra_args",
+          "type": "table of string lists",
+          "default": "{}",
+          "description": "Extra arguments inserted after the agent executable when a native agent session resumes, keyed by agent label, e.g. claude = [\"--dangerously-skip-permissions\"] resumes as claude --dangerously-skip-permissions --resume <id>. Restart the server to apply."
         }
       ]
     },
