@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ndbroadbent.herdr-pr-watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ndbroadbent/code/herdr/contrib/pr-watch/herdr-pr-watch</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/ndbroadbent/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>15</integer>
+  <key>StandardErrorPath</key>
+  <string>/Users/ndbroadbent/.cache/herdr-pr-watch/launchd.log</string>
+</dict>
+</plist>

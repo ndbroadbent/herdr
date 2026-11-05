@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+"""Keep herdr's sidebar tokens in step with each session's PR, CI and deploy queue state.
+
+Run once per interval (see the launchd plist next to this file). For every Claude session in the
+running herdr server it works out the session's PR, then writes these pane metadata tokens:
+
+    pr, pr_url        "#1281" and its GitHub link
+    ci_status         a Nerd Font check, x or dot (running)
+    ci_url            its CircleCI pipeline link
+    stage             where the PR is in the deploy queue, or "merged"/"closed"
+
+A session's PR comes from, in order:
+
+    1. a pr_ref token the session set itself, until it creates or checks out another PR:
+       herdr pane report-metadata "$HERDR_PANE_ID" --source agent --token pr_ref=1234
+       (or DocSpring/docspring#1234; clear it with --clear-token pr_ref)
+    2. its deploy queue entry while that's deploying (entries carry the session's
+       `claude --resume` command)
+    3. whichever came last: its on-hold queue entry, or the last `gh pr create` or
+       `gh pr checkout <number or url>` in its transcript
+    4. its most recent finished deploy queue entry
+
+A checkout by number is taken to be in DocSpring/docspring unless it passes --repo.
+
+Merged and closed PRs stay visible for a day, then their tokens are cleared.
+
+Anything unreachable leaves the affected tokens as they are: being off the tailnet doesn't blank
+the stage, and a GitHub outage doesn't blank the PR.
+"""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import NamedTuple
+
+QUEUE_URL = os.environ.get("DEPLOY_QUEUE_URL", "https://deploy-queue.docspring.io/api/queue")
+DEFAULT_REPO = os.environ.get("HERDR_PR_WATCH_REPO", "DocSpring/docspring")
+HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
+CACHE_ROOT = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
+STATE_PATH = CACHE_ROOT / "herdr-pr-watch" / "state.json"
+CLAUDE_PROJECTS = Path("~/.claude/projects").expanduser()
+
+STATE_VERSION = 2
+SOURCE = "pr-watch"
+OWNED_TOKENS = ("pr", "pr_url", "ci_url", "ci_status", "stage")
+HIDE_FINISHED_AFTER_SECS = 24 * 60 * 60
+MAX_TOKEN_VALUE_LEN = 80
+
+PR_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+PR_REF = re.compile(r"^(?:([\w.-]+/[\w.-]+)#)?#?(\d+)$")
+PR_CHECKOUT = re.compile(r"gh\s+pr\s+checkout\b([^\n;&|]*)")
+RESUME_SESSION = re.compile(r"--resume\s+([0-9a-f-]{36})")
+CIRCLE_JOB_URL = re.compile(r"circleci\.com/gh/([^/]+/[^/]+)/(\d+)")
+CIRCLE_PIPELINE_URL = re.compile(r"circleci\.com/pipelines/github/([^/]+/[^/]+)/(\d+)")
+
+STAGE_LABELS = {
+    "waiting": "waiting",
+    "awaiting_staging_approval": "wait staging",
+    "deploying_staging": "deploy staging",
+    "staging_qa": "staging qa",
+    "qa_failed": "qa failed",
+    "awaiting_production_approval": "wait us/eu",
+    "deploying_production": "deploy us/eu",
+    "merging": "merging",
+    "deploy_failed": "deploy failed",
+    "on_hold": "on hold",
+}
+
+# Nerd Font Octicons: check, x, dot-fill. config.toml colours the token by these exact values.
+CI_PASSED, CI_FAILED, CI_RUNNING = "", "", ""
+CI_STATUS = {
+    "SUCCESS": CI_PASSED,
+    "FAILURE": CI_FAILED,
+    "ERROR": CI_FAILED,
+    "PENDING": CI_RUNNING,
+    "EXPECTED": CI_RUNNING,
+}
+
+PR_FIELDS = """
+  number url state mergedAt closedAt headRefOid
+  commits(last: 1) { nodes { commit { statusCheckRollup {
+    state
+    contexts(first: 100) { nodes {
+      __typename
+      ... on StatusContext { targetUrl }
+      ... on CheckRun { detailsUrl }
+    } }
+  } } } }
+"""
+
+
+def log(message):
+    print(f"herdr-pr-watch: {message}", file=sys.stderr)
+
+
+def load_state():
+    try:
+        state = json.loads(STATE_PATH.read_text())
+    except (OSError, ValueError):
+        state = {}
+    if state.get("version") != STATE_VERSION:
+        state = {"version": STATE_VERSION}
+    state.setdefault("transcripts", {})
+    state.setdefault("pipelines", {})
+    return state
+
+
+def save_state(state):
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=STATE_PATH.parent, delete=False) as handle:
+        json.dump(state, handle)
+    os.replace(handle.name, STATE_PATH)
+
+
+def list_agents():
+    """The server's agents, or None when no server is running."""
+    try:
+        result = subprocess.run(
+            [HERDR, "agent", "list"], capture_output=True, text=True, timeout=15, check=False
+        )
+        return json.loads(result.stdout)["result"]["agents"]
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return None
+
+
+def checkout_target(command):
+    """The PR a `gh pr checkout` in this command switches to. None for a branch name."""
+    checkouts = PR_CHECKOUT.findall(command)
+    if not checkouts:
+        return None
+    try:
+        words = iter(shlex.split(checkouts[-1]))
+    except ValueError:
+        return None
+    repo, selector = None, None
+    for word in words:
+        if word in ("-R", "--repo"):
+            repo = next(words, None)
+        elif word.startswith("--repo="):
+            repo = word.split("=", 1)[1]
+        elif word in ("-b", "--branch"):
+            next(words, None)
+        elif not word.startswith("-") and selector is None:
+            selector = word
+    url = PR_URL.search(selector or "")
+    if url:
+        return f"{url.group(1)}#{url.group(2)}"
+    ref = PR_REF.match(selector or "")
+    return f"{ref.group(1) or repo or DEFAULT_REPO}#{ref.group(2)}" if ref else None
+
+
+def scan_transcript(session_id, record):
+    """Advance through new transcript lines, remembering the last PR the session moved to.
+
+    Transcripts reach gigabytes, so this resumes from the saved offset and only parses lines that
+    can matter.
+    """
+    path = record.get("path")
+    if not path or not os.path.exists(path):
+        matches = list(CLAUDE_PROJECTS.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return
+        path = str(matches[0])
+        record.update(path=path, offset=0, pending={})
+        record.pop("pr", None)
+        record.pop("pr_at", None)
+
+    offset = record.get("offset", 0)
+    if os.path.getsize(path) < offset:
+        offset = 0
+        record["pending"] = {}
+        record.pop("pr", None)
+        record.pop("pr_at", None)
+
+    # Commands waiting for their result, by tool id. A checkout already knows its PR; a create
+    # has to read it from the output, so it's waiting with None.
+    pending = dict(record.get("pending", {}))
+    with open(path, "rb") as transcript:
+        transcript.seek(offset)
+        for line in transcript:
+            # A line still being written: read it next time.
+            if not line.endswith(b"\n"):
+                break
+            offset += len(line)
+            is_command = b'"tool_use"' in line and (b"gh pr create" in line or b"gh pr checkout" in line)
+            is_result = b'"tool_result"' in line and any(tool_id.encode() in line for tool_id in pending)
+            if not is_command and not is_result:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            content = (entry.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use" and block.get("name") == "Bash":
+                    command = (block.get("input") or {}).get("command", "")
+                    if "gh pr create" in command:
+                        pending[block.get("id")] = None
+                    elif checkout_target(command):
+                        pending[block.get("id")] = checkout_target(command)
+                elif block.get("type") == "tool_result" and block.get("tool_use_id") in pending:
+                    ref = pending.pop(block.get("tool_use_id"))
+                    if ref is None:
+                        urls = PR_URL.findall(json.dumps(block.get("content")))
+                        ref = f"{urls[-1][0]}#{urls[-1][1]}" if urls else None
+                    elif block.get("is_error"):
+                        ref = None
+                    if ref:
+                        record["pr"] = ref
+                        record["pr_at"] = epoch(entry.get("timestamp"))
+    record["offset"] = offset
+    record["pending"] = pending
+
+
+def fetch_queue():
+    """The deploy queue, or None when it can't be reached (e.g. off the tailnet)."""
+    try:
+        with urllib.request.urlopen(QUEUE_URL, timeout=5) as response:
+            return json.load(response)
+    except (OSError, ValueError) as error:
+        log(f"deploy queue unavailable: {error}")
+        return None
+
+
+class QueueIndex(NamedTuple):
+    deploying: dict  # by session id: staging or waiting
+    on_hold: dict  # by session id
+    finished: dict  # by session id: the most recent
+    unfinished: dict  # by PR ref: where each PR's stage comes from
+
+
+def index_queue(queue):
+    index = QueueIndex({}, {}, {}, {})
+    if not queue:
+        return index
+
+    def add(entries, by_session):
+        for entry in entries:
+            match = RESUME_SESSION.search(entry.get("resume") or "")
+            if match:
+                by_session[match.group(1)] = entry
+
+    # Later entries overwrite earlier ones, so a session's entry furthest along wins.
+    on_hold = queue.get("on_hold", [])
+    deploying = list(reversed(queue.get("waiting", [])))
+    deploying += [queue["staging"]] if queue.get("staging") else []
+    add(deploying, index.deploying)
+    add(on_hold, index.on_hold)
+    add(sorted(queue.get("done", []), key=lambda e: e.get("finished_at") or 0), index.finished)
+    for entry in on_hold + deploying:
+        if entry_ref(entry):
+            index.unfinished[entry_ref(entry)] = entry
+    return index
+
+
+def entry_ref(entry):
+    match = PR_URL.search(entry.get("pr_url") or "")
+    if match:
+        return f"{match.group(1)}#{match.group(2)}"
+    return f"{DEFAULT_REPO}#{entry['pr_number']}" if entry.get("pr_number") else None
+
+
+def drop_superseded_pr_ref(agent, record, dry_run):
+    """A session's pr_ref applies until it creates or checks out another PR."""
+    tokens = agent.get("tokens") or {}
+    value = tokens.get("pr_ref")
+    seen = record.get("pr_ref")
+    if not value:
+        record.pop("pr_ref", None)
+    elif not seen or seen[0] != value:
+        record["pr_ref"] = [value, record.get("pr")]
+    elif seen[1] != record.get("pr"):
+        del tokens["pr_ref"]
+        record.pop("pr_ref", None)
+        if not dry_run:
+            report_tokens(agent["pane_id"], {}, ["pr_ref"])
+
+
+def pick_pr(agent, record, queue):
+    session_id = (agent.get("agent_session") or {}).get("value")
+    explicit = (agent.get("tokens") or {}).get("pr_ref")
+    if explicit:
+        match = PR_REF.match(explicit.strip())
+        if match:
+            return f"{match.group(1) or DEFAULT_REPO}#{match.group(2)}"
+        log(f"ignoring pr_ref {explicit!r} on {agent['pane_id']}")
+    if session_id in queue.deploying:
+        return entry_ref(queue.deploying[session_id])
+    # A hold can last indefinitely, so it stops counting once the session moves on to another PR.
+    held = queue.on_hold.get(session_id)
+    if held and record.get("pr_at", 0) <= (held.get("joined_at") or 0):
+        return entry_ref(held)
+    if record.get("pr"):
+        return record["pr"]
+    if session_id in queue.finished:
+        return entry_ref(queue.finished[session_id])
+    return None
+
+
+def fetch_prs(refs):
+    """PR details by "owner/repo#number". PRs GitHub couldn't return are left out."""
+    by_repo = {}
+    for ref in sorted(refs):
+        repo, number = ref.split("#")
+        by_repo.setdefault(repo, []).append(int(number))
+    if not by_repo:
+        return {}
+
+    parts, aliases = [], {}
+    for index, (repo, numbers) in enumerate(by_repo.items()):
+        owner, name = repo.split("/")
+        fields = " ".join(f"p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }}" for n in numbers)
+        parts.append(f'r{index}: repository(owner: "{owner}", name: "{name}") {{ {fields} }}')
+        aliases[f"r{index}"] = repo
+    query = "query { " + " ".join(parts) + " }"
+
+    # gh exits non-zero when one PR in the batch is missing but still prints the others.
+    try:
+        result = subprocess.run(
+            ["gh", "api", "graphql", "-f", f"query={query}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        data = json.loads(result.stdout).get("data") or {}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        log(f"GitHub unavailable: {error}")
+        return {}
+    if not data:
+        log(f"GitHub returned no data: {result.stderr.strip()[:200]}")
+
+    prs = {}
+    for alias, repository in data.items():
+        for pull in (repository or {}).values():
+            if pull:
+                prs[f"{aliases[alias]}#{pull['number']}"] = pull
+    return prs
+
+
+def circle_token():
+    token = os.environ.get("CIRCLE_TOKEN")
+    if token:
+        return token
+    try:
+        for line in Path("~/.circleci/cli.yml").expanduser().read_text().splitlines():
+            match = re.match(r"\s*token:\s*(\S+)", line)
+            if match:
+                return match.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def circle_get(path, token):
+    request = urllib.request.Request(
+        f"https://circleci.com/api/v2{path}",
+        headers={"Circle-Token": token, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+
+def pipeline_for(pull, state):
+    """(pipeline number, project slug) for the PR's head commit, cached per commit."""
+    sha = pull.get("headRefOid")
+    cached = state["pipelines"].get(sha)
+    if cached:
+        return cached
+    urls = [
+        node.get("targetUrl") or node.get("detailsUrl") or ""
+        for node in rollup_contexts(pull)
+    ]
+    found = None
+    for url in urls:
+        match = CIRCLE_PIPELINE_URL.search(url)
+        if match:
+            found = [int(match.group(2)), match.group(1)]
+            break
+    if not found:
+        job = next((m for m in map(CIRCLE_JOB_URL.search, urls) if m), None)
+        token = circle_token() if job else None
+        if job and token:
+            slug, number = job.groups()
+            try:
+                pipeline_id = circle_get(f"/project/gh/{slug}/job/{number}", token)["pipeline"]["id"]
+                found = [circle_get(f"/pipeline/{pipeline_id}", token)["number"], slug]
+            except (OSError, ValueError, KeyError) as error:
+                log(f"CircleCI unavailable for {sha[:8]}: {error}")
+    if found:
+        state["pipelines"][sha] = found
+    return found
+
+
+def latest_rollup(pull):
+    nodes = ((pull.get("commits") or {}).get("nodes")) or []
+    return ((nodes[-1].get("commit") or {}).get("statusCheckRollup") or {}) if nodes else {}
+
+
+def rollup_contexts(pull):
+    return ((latest_rollup(pull).get("contexts") or {}).get("nodes")) or []
+
+
+def epoch(timestamp):
+    return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() if timestamp else 0
+
+
+def age_secs(timestamp):
+    return time.time() - epoch(timestamp) if timestamp else 0
+
+
+def desired_tokens(pull, queue_entry, queue_known, current, state):
+    """The owned tokens this PR should have. Missing keys are cleared."""
+    if pull["state"] != "OPEN":
+        if age_secs(pull.get("mergedAt") or pull.get("closedAt")) > HIDE_FINISHED_AFTER_SECS:
+            return {}
+        return {
+            "pr": f"#{pull['number']}",
+            "pr_url": pull["url"],
+            "stage": "merged" if pull.get("mergedAt") else "closed",
+        }
+
+    tokens = {"pr": f"#{pull['number']}", "pr_url": pull["url"]}
+    pipeline = pipeline_for(pull, state)
+    if pipeline:
+        number, slug = pipeline
+        tokens["ci_url"] = f"https://app.circleci.com/pipelines/github/{slug}/{number}"
+    status = CI_STATUS.get(latest_rollup(pull).get("state"))
+    if status:
+        tokens["ci_status"] = status
+    if queue_entry:
+        phase = queue_entry.get("phase")
+        tokens["stage"] = STAGE_LABELS.get(phase, phase)
+    elif not queue_known and current.get("stage") and current.get("pr") == tokens["pr"]:
+        tokens["stage"] = current["stage"]
+    return {key: value for key, value in tokens.items() if value and len(value) <= MAX_TOKEN_VALUE_LEN}
+
+
+def apply_tokens(agent, desired, dry_run):
+    current = agent.get("tokens") or {}
+    changed = {k: v for k, v in desired.items() if current.get(k) != v}
+    cleared = [k for k in OWNED_TOKENS if k in current and k not in desired]
+    if not changed and not cleared:
+        return False
+    if dry_run:
+        return True
+    report_tokens(agent["pane_id"], changed, cleared)
+    return True
+
+
+def report_tokens(pane_id, changed, cleared):
+    command = [HERDR, "pane", "report-metadata", pane_id, "--source", SOURCE]
+    for key, value in changed.items():
+        command += ["--token", f"{key}={value}"]
+    for key in cleared:
+        command += ["--clear-token", key]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
+    if result.returncode != 0:
+        log(f"report-metadata failed for {pane_id}: {result.stderr.strip()[:200]}")
+
+
+def run(dry_run):
+    agents = list_agents()
+    if agents is None:
+        return 0
+
+    state = load_state()
+    queue = fetch_queue()
+    index = index_queue(queue)
+
+    claude_agents = [
+        agent
+        for agent in agents
+        if agent.get("agent") == "claude" and (agent.get("agent_session") or {}).get("value")
+    ]
+    records = state["transcripts"]
+    live_sessions = set()
+    refs = {}
+    for agent in claude_agents:
+        session_id = agent["agent_session"]["value"]
+        live_sessions.add(session_id)
+        record = records.setdefault(session_id, {})
+        scan_transcript(session_id, record)
+        drop_superseded_pr_ref(agent, record, dry_run)
+        ref = pick_pr(agent, record, index)
+        if ref:
+            refs[agent["pane_id"]] = ref
+    state["transcripts"] = {key: value for key, value in records.items() if key in live_sessions}
+
+    prs = fetch_prs(set(refs.values()))
+    wanted_commits = set()
+    changes = 0
+    for agent in claude_agents:
+        pane_id = agent["pane_id"]
+        current = agent.get("tokens") or {}
+        ref = refs.get(pane_id)
+        if ref is None:
+            desired = {}
+        elif ref not in prs:
+            continue
+        else:
+            pull = prs[ref]
+            wanted_commits.add(pull.get("headRefOid"))
+            desired = desired_tokens(pull, index.unfinished.get(ref), queue is not None, current, state)
+        if apply_tokens(agent, desired, dry_run):
+            changes += 1
+        if dry_run and desired:
+            shown = {k: v for k, v in desired.items() if not k.endswith("_url")}
+            print(f"{pane_id:8} {ref:30} {shown}")
+    state["pipelines"] = {k: v for k, v in state["pipelines"].items() if k in wanted_commits}
+
+    if dry_run:
+        print(f"{len(claude_agents)} sessions, {len(refs)} with a PR, {changes} would change")
+    save_state(state)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--dry-run", action="store_true", help="print tokens instead of writing them")
+    return run(parser.parse_args().dry_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
