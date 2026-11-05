@@ -120,6 +120,8 @@ pub enum AgentSidebarToken {
         token: Box<AgentSidebarToken>,
         style: SidebarTokenStyle,
         rules: Vec<SidebarTokenRule>,
+        /// Custom token (without its `$`) holding the URL a click on this token opens.
+        link: Option<String>,
     },
 }
 
@@ -152,6 +154,13 @@ impl AgentSidebarToken {
             token => (token, SidebarTokenStyle::default()),
         }
     }
+
+    pub(crate) fn link_token(&self) -> Option<&str> {
+        match self {
+            Self::Styled { link, .. } => link.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 impl SpaceSidebarToken {
@@ -182,7 +191,17 @@ struct RawStyledSidebarToken {
     dim: Option<bool>,
     #[serde(default)]
     rules: Vec<SidebarTokenRule>,
+    #[serde(default)]
+    link: Option<String>,
 }
+
+/// A sidebar token as written in config, split into its name, style, rules and link token.
+type SidebarTokenParts = (
+    String,
+    Option<SidebarTokenStyle>,
+    Vec<SidebarTokenRule>,
+    Option<String>,
+);
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -192,9 +211,9 @@ enum RawSidebarToken {
 }
 
 impl RawSidebarToken {
-    fn parts(self) -> Result<(String, Option<SidebarTokenStyle>, Vec<SidebarTokenRule>), String> {
+    fn parts(self) -> Result<SidebarTokenParts, String> {
         match self {
-            Self::Plain(token) => Ok((token, None, Vec::new())),
+            Self::Plain(token) => Ok((token, None, Vec::new(), None)),
             Self::Styled(token) => {
                 if token.rules.len() > 16 {
                     return Err("sidebar tokens may contain at most 16 rules".into());
@@ -204,6 +223,17 @@ impl RawSidebarToken {
                 {
                     return Err("sidebar rules require a text-valued token".into());
                 }
+                let link = token
+                    .link
+                    .map(|link| {
+                        link.strip_prefix('$')
+                            .filter(|name| valid_custom_token_name(name))
+                            .map(str::to_string)
+                            .ok_or_else(|| {
+                                format!("sidebar token link `{link}` must be a custom `$` token")
+                            })
+                    })
+                    .transpose()?;
                 Ok((
                     token.token,
                     Some(SidebarTokenStyle {
@@ -212,10 +242,19 @@ impl RawSidebarToken {
                         dim: token.dim,
                     }),
                     token.rules,
+                    link,
                 ))
             }
         }
     }
+}
+
+fn valid_custom_token_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
 }
 
 fn parse_sidebar_token<T>(value: String, builtins: &[(&str, T)]) -> Result<T, String>
@@ -230,12 +269,7 @@ where
             "unknown sidebar token `{value}`; custom tokens must start with `$`"
         ));
     };
-    if name.is_empty()
-        || name.len() > 32
-        || !name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
-    {
+    if !valid_custom_token_name(name) {
         return Err(format!("invalid custom sidebar token `{value}`"));
     }
     Ok(T::from(name.to_string()))
@@ -245,6 +279,7 @@ fn serialize_styled_token<S>(
     name: String,
     style: SidebarTokenStyle,
     rules: &[SidebarTokenRule],
+    link: Option<&str>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -264,6 +299,9 @@ where
     }
     if !rules.is_empty() {
         map.serialize_entry("rules", rules)?;
+    }
+    if let Some(link) = link {
+        map.serialize_entry("link", &format!("${link}"))?;
     }
     map.end()
 }
@@ -306,7 +344,14 @@ impl Serialize for AgentSidebarToken {
                 token,
                 style,
                 rules,
-            } => serialize_styled_token(agent_token_name(token), *style, rules, serializer),
+                link,
+            } => serialize_styled_token(
+                agent_token_name(token),
+                *style,
+                rules,
+                link.as_deref(),
+                serializer,
+            ),
             token => serializer.serialize_str(&agent_token_name(token)),
         }
     }
@@ -323,7 +368,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, link) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
         let token = parse_sidebar_token(
@@ -345,6 +390,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
             token: Box::new(token),
             style,
             rules,
+            link,
         }))
     }
 }
@@ -359,7 +405,7 @@ impl Serialize for SpaceSidebarToken {
                 token,
                 style,
                 rules,
-            } => serialize_styled_token(space_token_name(token), *style, rules, serializer),
+            } => serialize_styled_token(space_token_name(token), *style, rules, None, serializer),
             token => serializer.serialize_str(&space_token_name(token)),
         }
     }
@@ -376,9 +422,14 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, link) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
+        if link.is_some() {
+            return Err(serde::de::Error::custom(
+                "sidebar token links are only supported on agent rows",
+            ));
+        }
         let token = parse_sidebar_token(
             value,
             &[
@@ -725,5 +776,41 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 "accepted key {key:?}"
             );
         }
+    }
+
+    #[test]
+    fn agent_tokens_can_link_to_a_custom_token_and_survive_a_round_trip() {
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"
+rows = [[{ token = "$pr", link = "$pr_url" }, { token = "agent", fg = "#abc", link = "$agent_url" }, "workspace"]]
+"##,
+        )
+        .unwrap();
+
+        let row = &config.rows[0];
+        assert_eq!(row[0].link_token(), Some("pr_url"));
+        assert_eq!(row[1].link_token(), Some("agent_url"));
+        assert_eq!(row[2].link_token(), None);
+
+        let saved = toml::to_string(&config).unwrap();
+        let reloaded: AgentsSidebarConfig = toml::from_str(&saved).unwrap();
+        assert_eq!(reloaded.rows, config.rows);
+    }
+
+    #[test]
+    fn rejects_links_that_are_not_custom_tokens() {
+        for link in ["pr_url", "$", "$bad.name"] {
+            let input = format!("rows = [[{{ token = \"$pr\", link = \"{link}\" }}]]\n");
+            assert!(
+                toml::from_str::<AgentsSidebarConfig>(&input).is_err(),
+                "{link}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_links_on_space_rows() {
+        let input = "rows = [[{ token = \"workspace\", link = \"$url\" }]]\n";
+        assert!(toml::from_str::<SpacesSidebarConfig>(input).is_err());
     }
 }

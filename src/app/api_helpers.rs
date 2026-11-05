@@ -93,6 +93,17 @@ pub(super) fn detect_state_from_api(
     }
 }
 
+/// Whether anything still wants this pane read: an unseen completion or an unread mark.
+pub(super) fn pane_seen_including_marks(
+    pane: &crate::pane::PaneState,
+    terminal: &crate::terminal::TerminalState,
+) -> bool {
+    pane.seen
+        && !terminal
+            .metadata_tokens
+            .contains(crate::metadata_tokens::MARK_UNREAD_TOKEN)
+}
+
 pub(super) fn pane_agent_status(
     state: crate::detect::AgentState,
     seen: bool,

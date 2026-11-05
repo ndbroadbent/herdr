@@ -1836,6 +1836,12 @@ impl App {
                 );
             }
         }
+        // Marking a session inactive also dismisses any unseen completion it was showing.
+        let marks_inactive = tokens.as_ref().is_some_and(|tokens| {
+            tokens
+                .get(crate::metadata_tokens::MARK_INACTIVE_TOKEN)
+                .is_some_and(Option::is_some)
+        });
         let token_changed = tokens.is_some_and(|tokens| {
             let changed = terminal
                 .metadata_tokens
@@ -1845,6 +1851,15 @@ impl App {
             }
             changed
         });
+        if marks_inactive {
+            if let Some(pane) = self.state.workspaces[ws_idx].pane_state_mut(pane_id) {
+                pane.seen = true;
+            }
+        }
+        // Tokens with a TTL aren't saved, so only lasting ones need a session save.
+        if token_changed && ttl.is_none() {
+            self.state.mark_session_dirty();
+        }
 
         if presentation_requested {
             self.handle_internal_event(crate::events::AppEvent::HookMetadataReported {
@@ -4686,5 +4701,60 @@ mod tests {
 
             assert_eq!(metadata_error_code(&response), "invalid_metadata_ttl");
         }
+    }
+
+    fn report_tokens(
+        app: &mut crate::app::App,
+        pane_id: &str,
+        tokens: std::collections::HashMap<String, Option<String>>,
+        ttl_ms: Option<u64>,
+    ) {
+        let mut params = metadata_params(pane_id.to_string());
+        params.title = None;
+        params.tokens = tokens;
+        params.ttl_ms = ttl_ms;
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "marks".into(),
+            method: crate::api::schema::Method::PaneReportMetadata(params),
+        });
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+    }
+
+    #[test]
+    fn marking_a_pane_inactive_dismisses_its_completion_and_saves_the_session() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        let (_, internal_pane_id) = app.parse_pane_id(&pane_id).unwrap();
+        app.state.workspaces[0]
+            .panes
+            .get_mut(&internal_pane_id)
+            .unwrap()
+            .seen = false;
+        app.state.session_dirty = false;
+
+        report_tokens(
+            &mut app,
+            &pane_id,
+            std::collections::HashMap::from([("mark_inactive".into(), Some("1".into()))]),
+            None,
+        );
+
+        assert!(app.state.workspaces[0].panes[&internal_pane_id].seen);
+        assert!(app.state.session_dirty);
+    }
+
+    #[test]
+    fn tokens_with_a_ttl_do_not_save_the_session() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        app.state.session_dirty = false;
+
+        report_tokens(
+            &mut app,
+            &pane_id,
+            std::collections::HashMap::from([("progress".into(), Some("50%".into()))]),
+            Some(60_000),
+        );
+
+        assert!(!app.state.session_dirty);
     }
 }

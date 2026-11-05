@@ -13,6 +13,7 @@ use super::*;
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
+    pub(super) inactive: bool,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
@@ -39,6 +40,7 @@ pub(super) fn ordered_agent_pane_ids(
         agents.sort_by_key(|agent| {
             (
                 std::cmp::Reverse(status_priority(agent.agent_status)),
+                super::attention::is_marked_inactive(agent),
                 std::cmp::Reverse(agent.state_change_seq),
             )
         });
@@ -82,7 +84,7 @@ pub(super) fn render_agent_panel(
         |row| row.rows.len(),
         |buffer, rect, row, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
-            render_agent_row(buffer, rect, row, config);
+            render_agent_row(buffer, rect, row, config, hits);
         },
     );
 }
@@ -313,6 +315,7 @@ pub(super) fn agent_row(
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
+        inactive: super::attention::is_marked_inactive(agent),
         focused: agent.focused,
         rows,
     })
@@ -323,6 +326,7 @@ pub(super) fn render_agent_row(
     rect: Rect,
     row: &AgentRow,
     config: &ClientShellConfig,
+    hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
     let row_style = if row.focused {
@@ -343,20 +347,22 @@ pub(super) fn render_agent_row(
     let secondary = Style::default().fg(palette.overlay0);
     let icon = (
         status_icon(row.status, config.status_indicators),
-        Style::default().fg(status_color(row.status, palette)),
+        Style::default().fg(agent_status_color(row.status, row.inactive, palette)),
     );
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
             kind: crate::ui::ResolvedTokenKind::StateIcon,
             style: Default::default(),
+            link: None,
         }]]
     } else {
         row.rows.clone()
     };
     for (index, tokens) in rows.iter().take(rect.height as usize).enumerate() {
         let indent = if index == 0 { 1 } else { 3 };
+        let line_y = rect.y + index as u16;
         let mut spans = vec![ratatui::text::Span::raw(" ".repeat(indent))];
-        spans.extend(crate::ui::resolved_token_spans(
+        let (token_spans, links) = crate::ui::resolved_token_spans_with_links(
             tokens,
             icon,
             status_style,
@@ -365,11 +371,17 @@ pub(super) fn render_agent_row(
             secondary,
             palette,
             rect.width.saturating_sub(indent as u16) as usize,
-        ));
-        Paragraph::new(Line::from(spans)).style(row_style).render(
-            Rect::new(rect.x, rect.y + index as u16, rect.width, 1),
-            buffer,
         );
+        spans.extend(token_spans);
+        Paragraph::new(Line::from(spans))
+            .style(row_style)
+            .render(Rect::new(rect.x, line_y, rect.width, 1), buffer);
+        for link in links {
+            hits.agent_links.push((
+                Rect::new(rect.x + indent as u16 + link.offset, line_y, link.width, 1),
+                link.url,
+            ));
+        }
     }
 }
 

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 mod actions;
 mod agent_sidebar;
 mod aggregate_navigation;
+mod attention;
 mod machine_diagnostics;
 mod workspace_navigation;
 use workspace_navigation::{PendingWorkspaceHighlight, WorkspaceNavigationTarget};
@@ -233,6 +234,20 @@ fn status_color(
         AgentStatus::Done => palette.teal,
         AgentStatus::Idle => palette.green,
         AgentStatus::Unknown => palette.overlay0,
+    }
+}
+
+/// An inactive session is only grey while nothing about it needs you: working, blocked and unread
+/// all still show through.
+fn agent_status_color(
+    status: crate::api::schema::AgentStatus,
+    inactive: bool,
+    palette: &Palette,
+) -> ratatui::style::Color {
+    if inactive && status == crate::api::schema::AgentStatus::Idle {
+        palette.overlay0
+    } else {
+        status_color(status, palette)
     }
 }
 

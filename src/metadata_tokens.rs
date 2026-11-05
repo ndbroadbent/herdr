@@ -14,6 +14,12 @@ pub(crate) struct MetadataTokens {
 
 pub(crate) const MAX_SEQUENCE_SOURCES: usize = 32;
 
+/// Attention marks a person sets on a session. They are ordinary pane tokens, so they reach
+/// clients and survive restarts without any wire or API changes of their own.
+pub(crate) const MARK_UNREAD_TOKEN: &str = "mark_unread";
+pub(crate) const MARK_INACTIVE_TOKEN: &str = "mark_inactive";
+pub(crate) const MARK_SET_VALUE: &str = "1";
+
 pub(crate) fn sequence_is_fresh(
     sequences: &HashMap<String, u64>,
     source: &str,
@@ -86,6 +92,40 @@ impl MetadataTokens {
             .iter()
             .map(|(key, token)| (key.clone(), token.value.clone()))
             .collect()
+    }
+
+    pub(crate) fn contains(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    pub(crate) fn remove(&mut self, key: &str) -> bool {
+        self.entries.remove(key).is_some()
+    }
+
+    /// Values that should outlive this server. A token with a TTL is only true for now.
+    pub(crate) fn persistent_values(&self) -> HashMap<String, String> {
+        self.entries
+            .iter()
+            .filter(|(_, token)| token.expires_at.is_none())
+            .map(|(key, token)| (key.clone(), token.value.clone()))
+            .collect()
+    }
+
+    pub(crate) fn from_persisted(values: HashMap<String, String>) -> Self {
+        Self {
+            entries: values
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        key,
+                        MetadataToken {
+                            value,
+                            expires_at: None,
+                        },
+                    )
+                })
+                .collect(),
+        }
     }
 
     pub(crate) fn next_expiry(&self) -> Option<Instant> {
@@ -255,5 +295,35 @@ mod tests {
             tokens.values(),
             HashMap::from([("summary".into(), "persistent".into())])
         );
+    }
+
+    #[test]
+    fn only_tokens_without_a_ttl_outlive_the_server() {
+        let now = Instant::now();
+        let mut tokens = MetadataTokens::default();
+        tokens.patch(patch(&[("mark_inactive", Some("1"))]), None, now);
+        tokens.patch(
+            patch(&[("progress", Some("50%"))]),
+            Some(Duration::from_secs(60)),
+            now,
+        );
+
+        let saved = tokens.persistent_values();
+        assert_eq!(saved, HashMap::from([("mark_inactive".into(), "1".into())]));
+
+        let restored = MetadataTokens::from_persisted(saved);
+        assert!(restored.contains("mark_inactive"));
+        assert!(!restored.contains("progress"));
+        assert_eq!(restored.next_expiry(), None);
+    }
+
+    #[test]
+    fn remove_reports_whether_the_token_was_there() {
+        let mut tokens = MetadataTokens::default();
+        tokens.patch(patch(&[("summary", Some("x"))]), None, Instant::now());
+
+        assert!(tokens.remove("summary"));
+        assert!(!tokens.remove("summary"));
+        assert!(!tokens.contains("summary"));
     }
 }

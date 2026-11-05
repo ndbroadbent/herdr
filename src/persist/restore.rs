@@ -449,6 +449,8 @@ fn unavailable_restored_terminal(
     let mut terminal = TerminalState::new(TerminalId::alloc(), cwd);
     terminal.restore_error = Some(reason);
     if let Some(pane) = pane {
+        terminal.metadata_tokens =
+            crate::metadata_tokens::MetadataTokens::from_persisted(pane.metadata_tokens.clone());
         terminal.manual_label = pane.label.clone();
         terminal.launch_argv = pane.launch_argv.clone();
         if let Some(session) = restored_terminal_agent_session(pane.agent_session.as_ref(), false) {
@@ -533,6 +535,11 @@ fn restore_tab(
         }
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
+        let saved_metadata_tokens = crate::metadata_tokens::MetadataTokens::from_persisted(
+            saved_pane
+                .map(|p| p.metadata_tokens.clone())
+                .unwrap_or_default(),
+        );
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -593,6 +600,7 @@ fn restore_tab(
             let terminal_id = TerminalId::alloc();
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
+            terminal.metadata_tokens = saved_metadata_tokens;
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
@@ -688,6 +696,7 @@ fn restore_tab(
             Ok(runtime) => {
                 let terminal_id = TerminalId::alloc();
                 let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone());
+                terminal.metadata_tokens = saved_metadata_tokens;
                 if was_imported {
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
@@ -1554,6 +1563,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            metadata_tokens: Default::default(),
                         },
                     )]),
                     zoomed: false,
@@ -1636,6 +1646,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                metadata_tokens: Default::default(),
                             },
                         ),
                         (
@@ -1648,6 +1659,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                metadata_tokens: Default::default(),
                             },
                         ),
                     ]),
@@ -1702,6 +1714,7 @@ mod tests {
                     agent_session: None,
                     agent_resume: None,
                     launch_argv: None,
+                    metadata_tokens: Default::default(),
                 },
             )
         };
@@ -1718,6 +1731,7 @@ mod tests {
             }),
             agent_resume: None,
             launch_argv: None,
+            metadata_tokens: Default::default(),
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1870,6 +1884,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            metadata_tokens: Default::default(),
                         },
                     )]),
                     zoomed: false,
@@ -2176,6 +2191,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                metadata_tokens: Default::default(),
             },
         );
         let mut history = SessionHistorySnapshot {
@@ -2226,5 +2242,83 @@ mod tests {
         };
         history.layout_fingerprint = super::super::snapshot::layout_fingerprint(&snapshot);
         (snapshot, history)
+    }
+
+    #[tokio::test]
+    async fn restore_brings_back_saved_tokens_without_an_expiry() {
+        use crate::metadata_tokens::{MARK_INACTIVE_TOKEN, MARK_UNREAD_TOKEN};
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                id: Some("w1".into()),
+                custom_name: None,
+                identity_cwd: cwd.clone(),
+                worktree_space: None,
+                public_pane_numbers: HashMap::from([(10, 1)]),
+                next_public_pane_number: 2,
+                public_tab_numbers: vec![1],
+                next_public_tab_number: 2,
+                tabs: vec![TabSnapshot {
+                    custom_name: None,
+                    layout: LayoutSnapshot::Pane(10),
+                    panes: HashMap::from([(
+                        10,
+                        super::super::snapshot::PaneSnapshot {
+                            cwd: cwd.clone(),
+                            label: None,
+                            agent_name: None,
+                            managed_agent_kind: None,
+                            agent_session: None,
+                            agent_resume: None,
+                            launch_argv: None,
+                            metadata_tokens: HashMap::from([
+                                (MARK_INACTIVE_TOKEN.to_string(), "1".to_string()),
+                                (MARK_UNREAD_TOKEN.to_string(), "1".to_string()),
+                                ("pr".to_string(), "#12".to_string()),
+                            ]),
+                        },
+                    )]),
+                    zoomed: false,
+                    focused: Some(10),
+                    root_pane: Some(10),
+                }],
+                active_tab: 0,
+            }],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: Default::default(),
+        };
+        let (events, _event_rx) = mpsc::channel(4);
+
+        let (workspaces, terminals, _runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            0,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(RenderSignal::new()),
+        );
+
+        let pane = workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .expect("pane should restore");
+        let tokens = &terminals
+            .get(&pane.attached_terminal_id)
+            .expect("terminal should restore")
+            .metadata_tokens;
+        assert!(tokens.contains(MARK_INACTIVE_TOKEN));
+        assert!(tokens.contains(MARK_UNREAD_TOKEN));
+        assert_eq!(tokens.values().get("pr").map(String::as_str), Some("#12"));
+        assert_eq!(tokens.next_expiry(), None);
     }
 }

@@ -111,6 +111,8 @@ pub struct PaneSnapshot {
     pub agent_resume: Option<PaneAgentResumeSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata_tokens: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,6 +380,17 @@ fn capture_tab(
                 agent: resume.agent.clone(),
                 argv: resume.argv.clone(),
             });
+        let mut metadata_tokens = terminal
+            .map(|terminal| terminal.metadata_tokens.persistent_values())
+            .unwrap_or_default();
+        // Seen flags and client acknowledgements start over with each server, so a completion
+        // nobody has looked at yet comes back as an unread mark.
+        if tab.panes.get(id).is_some_and(|pane| !pane.seen) {
+            metadata_tokens.insert(
+                crate::metadata_tokens::MARK_UNREAD_TOKEN.to_string(),
+                crate::metadata_tokens::MARK_SET_VALUE.to_string(),
+            );
+        }
         panes.insert(
             id.raw(),
             PaneSnapshot {
@@ -388,6 +401,7 @@ fn capture_tab(
                 agent_session,
                 agent_resume,
                 launch_argv,
+                metadata_tokens,
             },
         );
     }
@@ -707,6 +721,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                metadata_tokens: Default::default(),
             },
         );
         panes.insert(
@@ -719,6 +734,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                metadata_tokens: Default::default(),
             },
         );
 
@@ -1405,6 +1421,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                metadata_tokens: Default::default(),
             },
         );
         panes.insert(
@@ -1419,6 +1436,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                metadata_tokens: Default::default(),
             },
         );
 
@@ -1462,5 +1480,82 @@ mod tests {
             restored.workspaces[0].tabs[0].panes[&0].cwd,
             PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test")
         );
+    }
+
+    #[test]
+    fn snapshot_saves_lasting_tokens_and_records_an_unseen_pane_as_unread() {
+        use crate::metadata_tokens::{MARK_INACTIVE_TOKEN, MARK_UNREAD_TOKEN};
+        let mut state = state_with_workspaces(&["marks"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        state.workspaces[0].tabs[0]
+            .panes
+            .get_mut(&root)
+            .unwrap()
+            .seen = false;
+        let now = std::time::Instant::now();
+        let tokens = &mut state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .metadata_tokens;
+        tokens.patch(
+            HashMap::from([
+                (MARK_INACTIVE_TOKEN.to_string(), Some("1".to_string())),
+                ("pr".to_string(), Some("#12".to_string())),
+            ]),
+            None,
+            now,
+        );
+        tokens.patch(
+            HashMap::from([("progress".to_string(), Some("50%".to_string()))]),
+            Some(std::time::Duration::from_secs(60)),
+            now,
+        );
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].tabs[0].panes[&root.raw()].metadata_tokens,
+            HashMap::from([
+                (MARK_INACTIVE_TOKEN.to_string(), "1".to_string()),
+                (MARK_UNREAD_TOKEN.to_string(), "1".to_string()),
+                ("pr".to_string(), "#12".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_seen_pane_with_no_tokens_saves_nothing_extra() {
+        let state = state_with_workspaces(&["plain"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+
+        let snapshot = capture_from_state(&state);
+        let pane = &snapshot.workspaces[0].tabs[0].panes[&root.raw()];
+
+        assert!(pane.metadata_tokens.is_empty());
+        let saved = serde_json::to_value(pane).unwrap();
+        assert!(saved.get("metadata_tokens").is_none());
+    }
+
+    #[test]
+    fn a_session_saved_before_tokens_existed_still_loads() {
+        let state = state_with_workspaces(&["old"]);
+        let snapshot = capture_from_state(&state);
+        let mut saved = serde_json::to_value(&snapshot).unwrap();
+        let root = state.workspaces[0].tabs[0].root_pane.raw().to_string();
+        saved["workspaces"][0]["tabs"][0]["panes"][&root]
+            .as_object_mut()
+            .unwrap()
+            .remove("metadata_tokens");
+
+        let loaded: SessionSnapshot = serde_json::from_value(saved).unwrap();
+
+        assert!(loaded.workspaces[0].tabs[0]
+            .panes
+            .values()
+            .all(|pane| pane.metadata_tokens.is_empty()));
     }
 }

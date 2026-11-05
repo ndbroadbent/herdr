@@ -213,7 +213,12 @@ impl App {
                 self.state
                     .terminals
                     .get(&pane.attached_terminal_id)
-                    .map(|terminal| (terminal.state, pane.seen))
+                    .map(|terminal| {
+                        (
+                            terminal.state,
+                            super::api_helpers::pane_seen_including_marks(pane, terminal),
+                        )
+                    })
             })
             .max_by_key(|(state, seen)| tab_attention_priority(*state, *seen))
             .unwrap_or((crate::detect::AgentState::Unknown, true));
@@ -356,7 +361,10 @@ impl App {
             terminal_title: terminal.terminal_title.clone(),
             terminal_title_stripped: terminal.terminal_title_stripped(),
             display_agent: presentation.display_agent,
-            agent_status: pane_agent_status(terminal.state, pane.seen),
+            agent_status: pane_agent_status(
+                terminal.state,
+                super::api_helpers::pane_seen_including_marks(pane, terminal),
+            ),
             state_labels: presentation.state_labels,
             tokens: terminal.metadata_tokens.values(),
             agent_session: terminal_agent_session_info(terminal),

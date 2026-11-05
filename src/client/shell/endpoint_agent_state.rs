@@ -50,10 +50,13 @@ impl EndpointAgentPresentation {
             self.acknowledged.clear();
             self.completed.clear();
             self.working.clear();
+            // The server's Done means nobody has looked yet, so a client attaching now mustn't
+            // count it as read.
             self.acknowledged.extend(
                 snapshot
                     .agents
                     .iter()
+                    .filter(|agent| agent.agent_status != AgentStatus::Done)
                     .map(|agent| (agent.pane_id.clone(), agent.state_change_seq)),
             );
         }
@@ -153,6 +156,12 @@ impl EndpointAgentPresentation {
         changed
     }
 
+    /// Dismisses the agent's latest completion without its pane having been shown.
+    pub(super) fn acknowledge_agent(&mut self, agent: &ClientShellAgent) {
+        self.acknowledged
+            .insert(agent.pane_id.clone(), agent.state_change_seq);
+    }
+
     pub(super) fn seen(&self, agent: &ClientShellAgent) -> bool {
         self.completed.get(&agent.pane_id).is_none_or(|completion| {
             self.acknowledged
@@ -164,7 +173,7 @@ impl EndpointAgentPresentation {
     fn projected_status(&self, agent: &ClientShellAgent) -> AgentStatus {
         match agent.agent_status {
             AgentStatus::Idle | AgentStatus::Done => {
-                if self.seen(agent) {
+                if self.seen(agent) && !super::attention::is_marked_unread(agent) {
                     AgentStatus::Idle
                 } else {
                     AgentStatus::Done
@@ -474,5 +483,90 @@ mod tests {
         assert!(!presentation.acknowledge_surface(&mut completed, &surface(1), Some(true)));
         assert!(!presentation.acknowledge_surface(&mut completed, &surface(2), Some(false)));
         assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    fn with_mark(mut snapshot: ClientShellSnapshot, token: &str) -> ClientShellSnapshot {
+        snapshot.agents[0]
+            .tokens
+            .push((token.to_string(), "1".to_string()));
+        snapshot
+    }
+
+    #[test]
+    fn unread_mark_shows_done_through_viewing_until_the_server_clears_it() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut marked = with_mark(
+            snapshot(AgentStatus::Idle, 4, 1),
+            crate::metadata_tokens::MARK_UNREAD_TOKEN,
+        );
+        presentation.project_snapshot(&mut marked);
+        assert_eq!(marked.agents[0].agent_status, AgentStatus::Done);
+
+        presentation.acknowledge_surface(&mut marked, &surface(1), Some(true));
+        assert_eq!(marked.agents[0].agent_status, AgentStatus::Done);
+
+        let mut cleared = snapshot(AgentStatus::Idle, 4, 2);
+        presentation.project_snapshot(&mut cleared);
+        assert_eq!(cleared.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn unread_mark_does_not_hide_live_agent_states() {
+        for status in [AgentStatus::Working, AgentStatus::Blocked] {
+            let mut presentation = EndpointAgentPresentation::default();
+            let mut marked = with_mark(
+                snapshot(status, 4, 1),
+                crate::metadata_tokens::MARK_UNREAD_TOKEN,
+            );
+            presentation.project_snapshot(&mut marked);
+            assert_eq!(marked.agents[0].agent_status, status);
+        }
+    }
+
+    #[test]
+    fn inactive_mark_leaves_the_projected_status_alone() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = with_mark(
+            snapshot(AgentStatus::Working, 4, 1),
+            crate::metadata_tokens::MARK_INACTIVE_TOKEN,
+        );
+        presentation.project_snapshot(&mut initial);
+        assert_eq!(initial.agents[0].agent_status, AgentStatus::Working);
+
+        let mut completed = with_mark(
+            snapshot(AgentStatus::Idle, 5, 2),
+            crate::metadata_tokens::MARK_INACTIVE_TOKEN,
+        );
+        presentation.project_snapshot(&mut completed);
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn attaching_to_an_unread_completion_keeps_it_unread_until_viewed() {
+        let mut presentation = EndpointAgentPresentation::default();
+        presentation.receive_completions(None, completions("endpoint-boot", 1, Some(6)));
+        let mut attached = snapshot(AgentStatus::Done, 6, 1);
+
+        presentation.project_snapshot(&mut attached);
+        assert_eq!(attached.agents[0].agent_status, AgentStatus::Done);
+
+        assert!(presentation.acknowledge_surface(&mut attached, &surface(1), Some(true)));
+        assert_eq!(attached.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn acknowledging_an_agent_dismisses_a_completion_that_was_never_shown() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+
+        presentation.acknowledge_agent(&completed.agents[0]);
+
+        let mut next = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.project_snapshot(&mut next);
+        assert_eq!(next.agents[0].agent_status, AgentStatus::Idle);
     }
 }

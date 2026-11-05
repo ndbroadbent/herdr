@@ -676,6 +676,26 @@ impl ClientShellState {
         changed
     }
 
+    pub(super) fn acknowledge_active_endpoint_agent(&mut self, pane_id: &str) {
+        let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+        else {
+            return;
+        };
+        let Some(snapshot) = endpoint.snapshot.as_deref() else {
+            return;
+        };
+        if let Some(agent) = snapshot
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == pane_id)
+        {
+            endpoint.agent_presentation.acknowledge_agent(agent);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_endpoint_snapshot(
         &mut self,

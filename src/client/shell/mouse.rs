@@ -1835,6 +1835,17 @@ impl ClientShellState {
                 if !self.config.mouse_capture {
                     return;
                 }
+                let agent_pane_id = self
+                    .hits
+                    .agents
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, pane_id)| pane_id.clone());
+                if let Some(pane_id) = agent_pane_id {
+                    self.open_agent_context_menu(pane_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
                 let workspace_id = (!self.sidebar_collapsed)
                     .then(|| self.active_endpoint_workspace_at(point))
                     .flatten();
@@ -2139,6 +2150,16 @@ impl ClientShellState {
                     .flatten();
                 if let Some(tab_press) = tab_press {
                     self.tab_press = Some(tab_press);
+                    return;
+                }
+                let agent_link = self
+                    .hits
+                    .agent_links
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, url)| url.clone());
+                if let Some(url) = agent_link {
+                    outcome.actions.push(ClientShellAction::OpenSafeWebUrl(url));
                     return;
                 }
                 if self.handle_endpoint_agent_click(point, outcome) {

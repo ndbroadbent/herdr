@@ -806,6 +806,18 @@
           "description": "Toggle zoom for the focused pane. The legacy key name `fullscreen` is accepted as an alias."
         },
         {
+          "key": "keys.mark_unread",
+          "type": "keybinding",
+          "default": "\"prefix+u\"",
+          "description": "Mark the focused session unread until you come back to it."
+        },
+        {
+          "key": "keys.mark_inactive",
+          "type": "keybinding",
+          "default": "\"prefix+i\"",
+          "description": "Mark the focused session inactive until it next does something."
+        },
+        {
           "key": "keys.resize_mode",
           "type": "keybinding",
           "default": "\"prefix+r\"",

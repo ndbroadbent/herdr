@@ -103,6 +103,13 @@ pub(crate) fn agent_panel_entries_from(
     entries
 }
 
+/// Where a clickable token landed in a row of spans.
+pub(crate) struct TokenLink {
+    pub offset: u16,
+    pub width: u16,
+    pub url: String,
+}
+
 pub(crate) fn resolved_token_spans(
     resolved: &[ResolvedToken],
     state_icon: (&str, Style),
@@ -113,6 +120,29 @@ pub(crate) fn resolved_token_spans(
     palette: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
+    resolved_token_spans_with_links(
+        resolved,
+        state_icon,
+        state_text_style,
+        workspace_style,
+        secondary_style,
+        custom_style,
+        palette,
+        max_width,
+    )
+    .0
+}
+
+pub(crate) fn resolved_token_spans_with_links(
+    resolved: &[ResolvedToken],
+    state_icon: (&str, Style),
+    state_text_style: Style,
+    workspace_style: Style,
+    secondary_style: Style,
+    custom_style: Style,
+    palette: &Palette,
+    max_width: usize,
+) -> (Vec<Span<'static>>, Vec<TokenLink>) {
     let fixed_widths = resolved
         .iter()
         .map(|token| match &token.kind {
@@ -213,6 +243,7 @@ pub(crate) fn resolved_token_spans(
     }
 
     let mut spans = Vec::new();
+    let mut links = Vec::new();
     for (position, index) in visible_indices.iter().copied().enumerate() {
         let token = &resolved[index];
         if position > 0 {
@@ -222,6 +253,7 @@ pub(crate) fn resolved_token_spans(
                 Style::default().fg(palette.overlay0),
             ));
         }
+        let token_start = spans.len();
         match &token.kind {
             ResolvedTokenKind::StateIcon => spans.push(Span::styled(
                 state_icon.0.to_string(),
@@ -270,8 +302,24 @@ pub(crate) fn resolved_token_spans(
                 ));
             }
         }
+        if let Some(url) = &token.link {
+            let span_width = |spans: &[Span<'static>]| {
+                spans
+                    .iter()
+                    .map(|span| display_width(&span.content))
+                    .sum::<usize>() as u16
+            };
+            for span in &mut spans[token_start..] {
+                span.style = span.style.add_modifier(Modifier::UNDERLINED);
+            }
+            links.push(TokenLink {
+                offset: span_width(&spans[..token_start]),
+                width: span_width(&spans[token_start..]),
+                url: url.clone(),
+            });
+        }
     }
-    spans
+    (spans, links)
 }
 
 fn apply_token_style(mut style: Style, patch: crate::config::SidebarTokenStyle) -> Style {

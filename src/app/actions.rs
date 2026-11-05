@@ -212,6 +212,7 @@ impl AppState {
             pane_id,
         };
         if previous.as_ref() != Some(&target) {
+            self.clear_unread_marks_on_focus(previous.as_ref(), &target);
             self.previous_pane_focus = previous;
         }
     }
@@ -219,7 +220,54 @@ impl AppState {
     fn record_pane_focus_after_navigation(&mut self, previous: Option<PaneFocusTarget>) {
         let current = self.current_pane_focus_target();
         if previous != current {
+            if let Some(current) = current.as_ref() {
+                self.clear_unread_marks_on_focus(previous.as_ref(), current);
+            }
             self.previous_pane_focus = previous;
+        }
+    }
+
+    /// Coming back to a session is what reads it, so only a focus change clears an unread mark:
+    /// marking the session you're in leaves it marked until you leave and return. Arriving at a
+    /// tab shows all of its panes; moving within a tab only reaches the pane you moved to.
+    fn clear_unread_marks_on_focus(
+        &mut self,
+        previous: Option<&PaneFocusTarget>,
+        current: &PaneFocusTarget,
+    ) {
+        let Some(tab) = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == current.workspace_id)
+            .and_then(|ws| {
+                ws.tabs
+                    .iter()
+                    .find(|tab| tab.panes.contains_key(&current.pane_id))
+            })
+        else {
+            return;
+        };
+        let same_tab = previous.is_some_and(|previous| {
+            previous.workspace_id == current.workspace_id
+                && tab.panes.contains_key(&previous.pane_id)
+        });
+        let mut changed = false;
+        for (pane_id, pane) in &tab.panes {
+            if same_tab && *pane_id != current.pane_id {
+                continue;
+            }
+            if let Some(terminal) = self.terminals.get_mut(&pane.attached_terminal_id) {
+                if terminal
+                    .metadata_tokens
+                    .remove(crate::metadata_tokens::MARK_UNREAD_TOKEN)
+                {
+                    terminal.revision = terminal.revision.saturating_add(1);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.mark_session_dirty();
         }
     }
 
@@ -246,6 +294,7 @@ impl AppState {
             .and_then(|ws| ws.tabs.get_mut(tab_idx))
         {
             tab.layout.focus_pane(pane_id);
+            self.clear_unread_marks_on_focus(previous.as_ref(), &target);
             self.previous_pane_focus = previous;
             self.mark_session_dirty();
             return true;
@@ -468,6 +517,9 @@ impl AppState {
                 pane.seen = true;
                 changed = true;
             }
+        }
+        if changed {
+            self.mark_session_dirty();
         }
         changed
     }
@@ -1840,6 +1892,7 @@ impl AppState {
             .tabs
             .iter_mut()
             .find_map(|tab| tab.panes.get_mut(&pane_id))?;
+        let previous_seen = pane.seen;
 
         if change.state != AgentState::Idle {
             pane.seen = true;
@@ -1847,6 +1900,28 @@ impl AppState {
             pane.seen = suppress_active_tab_notifications;
         }
         let seen = pane.seen;
+        let terminal_id = pane.attached_terminal_id.clone();
+
+        if seen != previous_seen {
+            self.mark_session_dirty();
+        }
+        // Inactive only lasts while a session is quiet: once it does anything, it has to be marked
+        // again by hand. Unknown isn't activity. It's a session settling after a restart or going
+        // away, and a mark has to survive both.
+        let session_acted = change.state != change.previous_state
+            && change.state != AgentState::Unknown
+            && change.previous_state != AgentState::Unknown;
+        if session_acted {
+            if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+                if terminal
+                    .metadata_tokens
+                    .remove(crate::metadata_tokens::MARK_INACTIVE_TOKEN)
+                {
+                    terminal.revision = terminal.revision.saturating_add(1);
+                    self.mark_session_dirty();
+                }
+            }
+        }
 
         if !suppress_completion {
             if let Some(delivery) =
@@ -4726,5 +4801,214 @@ mod tests {
         assert!(!deferred);
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].display_name(), "notes");
+    }
+
+    fn pane_tokens(
+        state: &mut AppState,
+        ws_idx: usize,
+        pane_id: PaneId,
+    ) -> &mut crate::metadata_tokens::MetadataTokens {
+        let terminal_id = state.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        &mut state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .metadata_tokens
+    }
+
+    fn set_mark(state: &mut AppState, ws_idx: usize, pane_id: PaneId, token: &str) {
+        pane_tokens(state, ws_idx, pane_id).patch(
+            std::collections::HashMap::from([(
+                token.to_string(),
+                Some(crate::metadata_tokens::MARK_SET_VALUE.to_string()),
+            )]),
+            None,
+            std::time::Instant::now(),
+        );
+    }
+
+    fn has_mark(state: &mut AppState, ws_idx: usize, pane_id: PaneId, token: &str) -> bool {
+        pane_tokens(state, ws_idx, pane_id).contains(token)
+    }
+
+    fn report_state(state: &mut AppState, pane_id: PaneId, agent_state: AgentState) {
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: agent_state,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+    }
+
+    fn set_terminal_state(state: &mut AppState, ws_idx: usize, pane_id: PaneId, value: AgentState) {
+        let terminal_id = state.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().state = value;
+    }
+
+    #[test]
+    fn unread_mark_stays_while_you_are_there_and_clears_when_you_come_back() {
+        use crate::metadata_tokens::MARK_UNREAD_TOKEN;
+        let mut state = app_with_workspaces(&["a", "b"]);
+        let pane = *state.workspaces[0].panes.keys().next().unwrap();
+        set_mark(&mut state, 0, pane, MARK_UNREAD_TOKEN);
+
+        state.mark_active_tab_seen();
+        assert!(has_mark(&mut state, 0, pane, MARK_UNREAD_TOKEN));
+
+        state.switch_workspace(1);
+        assert!(has_mark(&mut state, 0, pane, MARK_UNREAD_TOKEN));
+
+        state.session_dirty = false;
+        state.switch_workspace(0);
+        assert!(!has_mark(&mut state, 0, pane, MARK_UNREAD_TOKEN));
+        assert!(
+            state.session_dirty,
+            "a cleared mark has to reach session.json"
+        );
+    }
+
+    #[test]
+    fn arriving_at_a_tab_reads_its_panes_but_moving_within_it_reads_only_the_target() {
+        use crate::metadata_tokens::MARK_UNREAD_TOKEN;
+        let mut state = app_with_workspaces(&["a", "b"]);
+        let left = *state.workspaces[0].panes.keys().next().unwrap();
+        let right = state.workspaces[0].test_split(Direction::Horizontal);
+        state.ensure_test_terminals();
+        assert!(state.focus_pane_in_workspace(0, left));
+        set_mark(&mut state, 0, left, MARK_UNREAD_TOKEN);
+        set_mark(&mut state, 0, right, MARK_UNREAD_TOKEN);
+
+        assert!(state.focus_pane_in_workspace(0, right));
+        assert!(has_mark(&mut state, 0, left, MARK_UNREAD_TOKEN));
+        assert!(!has_mark(&mut state, 0, right, MARK_UNREAD_TOKEN));
+
+        set_mark(&mut state, 0, right, MARK_UNREAD_TOKEN);
+        state.switch_workspace(1);
+        state.switch_workspace(0);
+        assert!(!has_mark(&mut state, 0, left, MARK_UNREAD_TOKEN));
+        assert!(!has_mark(&mut state, 0, right, MARK_UNREAD_TOKEN));
+    }
+
+    #[test]
+    fn any_activity_clears_the_inactive_mark_wherever_you_are() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        for (outer_focus, ws_idx) in [(Some(true), 0), (Some(false), 0), (Some(true), 1)] {
+            for next in [AgentState::Working, AgentState::Blocked] {
+                let mut state = app_with_workspaces(&["active", "background"]);
+                state.active = Some(0);
+                state.outer_terminal_focus = outer_focus;
+                let pane = *state.workspaces[ws_idx].panes.keys().next().unwrap();
+                set_terminal_state(&mut state, ws_idx, pane, AgentState::Idle);
+                set_mark(&mut state, ws_idx, pane, MARK_INACTIVE_TOKEN);
+
+                state.session_dirty = false;
+                report_state(&mut state, pane, next);
+
+                assert!(
+                    !has_mark(&mut state, ws_idx, pane, MARK_INACTIVE_TOKEN),
+                    "{outer_focus:?} workspace {ws_idx} {next:?}"
+                );
+                assert!(
+                    state.session_dirty,
+                    "a cleared mark has to reach session.json"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn background_work_on_an_inactive_session_goes_yellow_blue_then_green() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.outer_terminal_focus = Some(true);
+        state.active = Some(0);
+        let pane = *state.workspaces[1].panes.keys().next().unwrap();
+        set_terminal_state(&mut state, 1, pane, AgentState::Idle);
+        set_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN);
+
+        report_state(&mut state, pane, AgentState::Working);
+        report_state(&mut state, pane, AgentState::Idle);
+        assert!(!state.workspaces[1].panes.get(&pane).unwrap().seen);
+
+        state.switch_workspace(1);
+        assert!(state.workspaces[1].panes.get(&pane).unwrap().seen);
+        assert!(!has_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN));
+    }
+
+    #[test]
+    fn a_mark_set_while_the_session_is_busy_ends_when_it_finishes() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        for busy in [AgentState::Working, AgentState::Blocked] {
+            let mut state = app_with_workspaces(&["a"]);
+            let pane = *state.workspaces[0].panes.keys().next().unwrap();
+            set_terminal_state(&mut state, 0, pane, busy);
+            set_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN);
+
+            report_state(&mut state, pane, AgentState::Idle);
+
+            assert!(
+                !has_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN),
+                "{busy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn settling_after_a_restart_keeps_the_inactive_mark() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        let mut state = app_with_workspaces(&["a"]);
+        let pane = *state.workspaces[0].panes.keys().next().unwrap();
+        set_terminal_state(&mut state, 0, pane, AgentState::Unknown);
+        set_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN);
+
+        report_state(&mut state, pane, AgentState::Idle);
+
+        assert!(has_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN));
+    }
+
+    #[test]
+    fn a_session_going_away_keeps_the_inactive_mark() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        let mut state = app_with_workspaces(&["a"]);
+        let pane = *state.workspaces[0].panes.keys().next().unwrap();
+        set_terminal_state(&mut state, 0, pane, AgentState::Idle);
+        set_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN);
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: pane,
+            agent: None,
+            state: AgentState::Unknown,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+
+        assert!(has_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN));
+    }
+
+    #[test]
+    fn work_that_starts_while_a_session_is_settling_still_ends_the_mark() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        let mut state = app_with_workspaces(&["a"]);
+        let pane = *state.workspaces[0].panes.keys().next().unwrap();
+        set_terminal_state(&mut state, 0, pane, AgentState::Unknown);
+        set_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN);
+
+        report_state(&mut state, pane, AgentState::Working);
+        report_state(&mut state, pane, AgentState::Idle);
+
+        assert!(!has_mark(&mut state, 0, pane, MARK_INACTIVE_TOKEN));
     }
 }

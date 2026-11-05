@@ -166,7 +166,11 @@ pub(crate) fn render_collapsed_sidebar(
             rect.y,
             rect.width.saturating_sub(2),
             status_icon(agent.agent_status, config.status_indicators),
-            Style::default().fg(status_color(agent.agent_status, palette)),
+            Style::default().fg(agent_status_color(
+                agent.agent_status,
+                super::super::attention::is_marked_inactive(agent),
+                palette,
+            )),
         );
         hits.agents.push((rect, pane_id));
     }

@@ -7,6 +7,8 @@ use crate::config::{
 pub(crate) struct ResolvedToken {
     pub kind: ResolvedTokenKind,
     pub style: SidebarTokenStyle,
+    /// URL a click on this token opens.
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +45,11 @@ impl ResolvedTokenKind {
 
 impl ResolvedToken {
     fn new(kind: ResolvedTokenKind, style: SidebarTokenStyle) -> Self {
-        Self { kind, style }
+        Self {
+            kind,
+            style,
+            link: None,
+        }
     }
 
     #[cfg(test)]
@@ -113,7 +119,12 @@ pub(crate) fn agent_rows(
                     let style = kind
                         .text_value()
                         .map_or(Some(style), |value| configured.style_for_value(value))?;
-                    Some(ResolvedToken::new(kind, style))
+                    let mut token = ResolvedToken::new(kind, style);
+                    token.link = configured
+                        .link_token()
+                        .and_then(|name| context.tokens.get(name))
+                        .cloned();
+                    Some(token)
                 })
                 .collect::<Vec<_>>();
             (!resolved.is_empty()).then_some(resolved)
@@ -583,5 +594,65 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                 "2 changes".into()
             ))]]
         );
+    }
+
+    #[test]
+    fn a_link_comes_from_the_token_it_names_and_points_at_its_own_cells() {
+        use ratatui::style::{Modifier, Style};
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"
+rows = [["state_icon", { token = "$pr", link = "$pr_url" }, { token = "$stage", link = "$missing" }]]
+"##,
+        )
+        .unwrap();
+        let mut entry = entry();
+        entry.tokens.insert("pr".into(), "#12".into());
+        entry
+            .tokens
+            .insert("pr_url".into(), "https://example.test/12".into());
+        entry.tokens.insert("stage".into(), "merged".into());
+
+        let rows = agent_rows(&config, context(&entry), "idle");
+        assert_eq!(rows[0][1].link.as_deref(), Some("https://example.test/12"));
+        assert_eq!(rows[0][2].link, None);
+
+        let theme = Style::default();
+        let spans_at = |width| {
+            super::super::resolved_token_spans_with_links(
+                &rows[0],
+                ("*", theme),
+                theme,
+                theme,
+                theme,
+                theme,
+                &super::super::Palette::catppuccin(),
+                width,
+            )
+        };
+
+        let (spans, links) = spans_at(40);
+        let [link] = &links[..] else {
+            panic!("expected one link, got {}", links.len());
+        };
+        assert_eq!(link.url, "https://example.test/12");
+        let text = spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let linked = text
+            .chars()
+            .skip(link.offset as usize)
+            .take(link.width as usize)
+            .collect::<String>();
+        assert_eq!(linked, "#12");
+        assert!(spans.iter().any(|span| {
+            span.content == "#12" && span.style.add_modifier.contains(Modifier::UNDERLINED)
+        }));
+        assert!(spans.iter().all(|span| {
+            span.content == "#12" || !span.style.add_modifier.contains(Modifier::UNDERLINED)
+        }));
+
+        let (_, links) = spans_at(1);
+        assert!(links.is_empty(), "a token that doesn't fit has no link");
     }
 }

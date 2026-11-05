@@ -29,7 +29,7 @@ pub(super) fn render_collapsed(
                 .fg(if row.stale {
                     config.palette.overlay0
                 } else {
-                    status_color(row.agent.status, &config.palette)
+                    agent_status_color(row.agent.status, row.agent.inactive, &config.palette)
                 })
                 .add_modifier(if row.stale {
                     Modifier::DIM
@@ -72,7 +72,7 @@ pub(super) fn render_expanded(
         hits,
         |row| row.agent.rows.len(),
         |buffer, rect, row, hits| {
-            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config);
+            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config, hits);
             if row.stale {
                 buffer.set_style(
                     rect,

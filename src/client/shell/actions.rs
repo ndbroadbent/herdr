@@ -869,6 +869,16 @@ impl ClientShellState {
         };
         use crate::input::KeybindAction;
 
+        let mark = match action {
+            KeybindAction::ToggleUnreadMark => Some(ClientContextMenuAction::ToggleUnreadMark),
+            KeybindAction::ToggleInactiveMark => Some(ClientContextMenuAction::ToggleInactiveMark),
+            _ => None,
+        };
+        if let Some(mark) = mark {
+            let pane_id = self.snapshot.as_deref()?.focused_pane_id.clone()?;
+            return self.mark_method(&pane_id, mark);
+        }
+
         let snapshot = self.snapshot.as_deref()?;
         let focused_workspace = snapshot.focused_workspace_id.clone()?;
         let focused_tab = snapshot.focused_tab_id.clone();

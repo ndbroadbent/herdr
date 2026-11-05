@@ -79,6 +79,26 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+            ClientContextMenuTarget::Agent {
+                unread, inactive, ..
+            } => vec![
+                item(
+                    if *unread {
+                        "Mark as read"
+                    } else {
+                        "Mark as unread"
+                    },
+                    Action::ToggleUnreadMark,
+                ),
+                item(
+                    if *inactive {
+                        "Mark as active"
+                    } else {
+                        "Mark as inactive"
+                    },
+                    Action::ToggleInactiveMark,
+                ),
+            ],
         }
     }
 }
@@ -167,6 +187,54 @@ impl ClientShellState {
         }));
     }
 
+    pub(super) fn open_agent_context_menu(&mut self, pane_id: String, x: u16, y: u16) {
+        let Some(agent) = self.snapshot.as_deref().and_then(|snapshot| {
+            snapshot
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == pane_id)
+        }) else {
+            return;
+        };
+        let target = ClientContextMenuTarget::Agent {
+            unread: super::attention::is_marked_unread(agent),
+            inactive: super::attention::is_marked_inactive(agent),
+            pane_id,
+        };
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target,
+            x,
+            y,
+            highlighted: 0,
+        }));
+    }
+
+    /// The mark request for `action` on the agent in `pane_id`. Marking inactive also dismisses
+    /// the completion it may be showing, which only this client's acknowledgement can do.
+    pub(super) fn mark_method(
+        &mut self,
+        pane_id: &str,
+        action: ClientContextMenuAction,
+    ) -> Option<crate::api::schema::Method> {
+        let agent = self
+            .snapshot
+            .as_deref()?
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == pane_id)?;
+        let method = match action {
+            ClientContextMenuAction::ToggleUnreadMark => super::attention::toggle_unread(agent),
+            ClientContextMenuAction::ToggleInactiveMark => super::attention::toggle_inactive(agent),
+            _ => return None,
+        };
+        let marking_inactive = action == ClientContextMenuAction::ToggleInactiveMark
+            && !super::attention::is_marked_inactive(agent);
+        if marking_inactive {
+            self.acknowledge_active_endpoint_agent(pane_id);
+        }
+        Some(method)
+    }
+
     pub(super) fn move_context_menu_selection(&mut self, delta: isize) {
         let Some(ClientShellOverlay::ContextMenu(menu)) = self.overlay.as_mut() else {
             return;
@@ -215,6 +283,11 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
+            ClientContextMenuTarget::Agent { pane_id, .. } => {
+                if let Some(method) = self.mark_method(&pane_id, action) {
+                    self.push_endpoint_method(method, outcome);
+                }
+            }
         }
         outcome.repaint = true;
     }
