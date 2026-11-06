@@ -22,7 +22,7 @@ A session's PR comes from, in order:
 
 A checkout by number is taken to be in DocSpring/docspring unless it passes --repo.
 
-Merged and closed PRs stay visible for a day, then their tokens are cleared.
+Merged PRs stay visible for 15 minutes and closed ones for a day, then their tokens are cleared.
 
 Anything unreachable leaves the affected tokens as they are: being off the tailnet doesn't blank
 the stage, and a GitHub outage doesn't blank the PR.
@@ -53,7 +53,8 @@ CLAUDE_PROJECTS = Path("~/.claude/projects").expanduser()
 STATE_VERSION = 2
 SOURCE = "pr-watch"
 OWNED_TOKENS = ("pr", "pr_url", "ci_url", "ci_status", "stage")
-HIDE_FINISHED_AFTER_SECS = 24 * 60 * 60
+HIDE_MERGED_AFTER_SECS = 15 * 60
+HIDE_CLOSED_AFTER_SECS = 24 * 60 * 60
 MAX_TOKEN_VALUE_LEN = 80
 
 PR_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
@@ -426,12 +427,14 @@ def age_secs(timestamp):
 def desired_tokens(pull, queue_entry, queue_known, current, state):
     """The owned tokens this PR should have. Missing keys are cleared."""
     if pull["state"] != "OPEN":
-        if age_secs(pull.get("mergedAt") or pull.get("closedAt")) > HIDE_FINISHED_AFTER_SECS:
+        merged_at = pull.get("mergedAt")
+        hide_after = HIDE_MERGED_AFTER_SECS if merged_at else HIDE_CLOSED_AFTER_SECS
+        if age_secs(merged_at or pull.get("closedAt")) > hide_after:
             return {}
         return {
             "pr": f"#{pull['number']}",
             "pr_url": pull["url"],
-            "stage": "merged" if pull.get("mergedAt") else "closed",
+            "stage": "merged" if merged_at else "closed",
         }
 
     tokens = {"pr": f"#{pull['number']}", "pr_url": pull["url"]}

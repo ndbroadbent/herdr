@@ -5,6 +5,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -28,6 +29,10 @@ def queue_entry(number, joined_at=100, resume=RESUME):
 
 def agent(**tokens):
     return {"pane_id": "w1:p1", "agent_session": {"value": SESSION}, "tokens": tokens}
+
+
+def ago(**elapsed):
+    return (datetime.now(timezone.utc) - timedelta(**elapsed)).isoformat()
 
 
 class TranscriptTests(unittest.TestCase):
@@ -191,6 +196,33 @@ class StageTests(unittest.TestCase):
     def test_off_the_tailnet_a_stage_only_survives_on_its_own_pr(self):
         self.assertEqual(self.tokens(None, queue_known=False, pr="#2", stage="on hold")["stage"], "on hold")
         self.assertNotIn("stage", self.tokens(None, queue_known=False, pr="#1", stage="on hold"))
+
+
+class FinishedPrTests(unittest.TestCase):
+    def merged(self, **elapsed):
+        # GitHub sets closedAt on a merged PR too.
+        finished = ago(**elapsed)
+        pull = {"number": 2, "url": url(2), "state": "MERGED", "mergedAt": finished, "closedAt": finished}
+        return watch.desired_tokens(pull, None, True, {}, {"pipelines": {}})
+
+    def closed(self, **elapsed):
+        pull = {"number": 2, "url": url(2), "state": "CLOSED", "mergedAt": None, "closedAt": ago(**elapsed)}
+        return watch.desired_tokens(pull, None, True, {}, {"pipelines": {}})
+
+    def test_a_merged_pr_shows_for_15_minutes(self):
+        self.assertEqual(self.merged(minutes=14), {"pr": "#2", "pr_url": url(2), "stage": "merged"})
+        self.assertEqual(self.merged(minutes=16), {})
+
+    def test_a_closed_pr_shows_for_a_day(self):
+        self.assertEqual(self.closed(minutes=16)["stage"], "closed")
+        self.assertEqual(self.closed(hours=23)["stage"], "closed")
+        self.assertEqual(self.closed(hours=25), {})
+
+    def test_hiding_a_merged_pr_clears_what_it_left_in_the_sidebar(self):
+        pane = agent(pr="#2", pr_url=url(2), stage="merged")
+        with mock.patch.object(watch, "report_tokens") as report:
+            watch.apply_tokens(pane, self.merged(minutes=16), dry_run=False)
+        report.assert_called_once_with("w1:p1", {}, ["pr", "pr_url", "stage"])
 
 
 if __name__ == "__main__":
