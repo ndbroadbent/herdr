@@ -1085,6 +1085,12 @@
           "description": "Also list tabs that have no agent: in tab bar order among the agents when the list is grouped, or after the agents when it is sorted by priority. They show the tab name without a state dot and use as many lines as an agent entry. Click one to switch to the tab, or right-click it for the tab menu."
         },
         {
+          "key": "ui.sidebar.agents.recent_done_color",
+          "type": "color",
+          "default": "unset",
+          "description": "Colour for a done agent's state dot during the first minute after it finished, so the one that just finished stands out from the others. Unset keeps the usual done colour."
+        },
+        {
           "key": "ui.sidebar.agents.rows",
           "type": "list of token rows",
           "default": "[[\"state_icon\", \"machine\", \"workspace\", \"tab\"], [\"agent\"]]",

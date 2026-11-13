@@ -6620,6 +6620,15 @@
               "minimum": 0,
               "type": "integer"
             },
+            "state_changed_at_unix_ms": {
+              "description": "When the agent's state last changed, in milliseconds since the Unix epoch.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "state_labels": {
               "additionalProperties": {
                 "type": "string"

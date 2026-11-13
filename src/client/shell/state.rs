@@ -98,6 +98,8 @@ pub(super) struct ShellHitMap {
     pub(super) agent_tabs: Vec<(Rect, String)>,
     /// Clickable sidebar tokens and their URLs. They sit on top of `agents`.
     pub(super) agent_links: Vec<(Rect, String)>,
+    /// When the soonest visible agent entry next changes as it ages, so the timer can repaint.
+    pub(super) agent_age_repaint_at_unix_ms: Option<u64>,
     pub(super) endpoint_agents: Vec<(Rect, ClientEndpointId, String)>,
     pub(super) agent_body: Rect,
     pub(super) agent_scrollbar: Rect,

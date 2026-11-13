@@ -115,6 +115,8 @@ pub enum AgentSidebarToken {
     Agent,
     TerminalTitle,
     TerminalTitleStripped,
+    /// How long ago the agent's state last changed: `0m`, `5m`, `2h`, `3d`, `1w`, `2mo`.
+    Changed,
     Custom(String),
     Styled {
         token: Box<AgentSidebarToken>,
@@ -317,6 +319,7 @@ fn agent_token_name(token: &AgentSidebarToken) -> String {
         AgentSidebarToken::Agent => "agent".into(),
         AgentSidebarToken::TerminalTitle => "terminal_title".into(),
         AgentSidebarToken::TerminalTitleStripped => "terminal_title_stripped".into(),
+        AgentSidebarToken::Changed => "changed".into(),
         AgentSidebarToken::Custom(name) => format!("${name}"),
         AgentSidebarToken::Styled { token, .. } => agent_token_name(token),
     }
@@ -383,6 +386,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
                 ("agent", Self::Agent),
                 ("terminal_title", Self::TerminalTitle),
                 ("terminal_title_stripped", Self::TerminalTitleStripped),
+                ("changed", Self::Changed),
             ],
         )
         .map_err(serde::de::Error::custom)?;
@@ -480,6 +484,19 @@ pub struct AgentsSidebarConfig {
     pub row_gap: u16,
     /// Also list tabs that have no agent, so every tab is reachable from here.
     pub show_tabs_without_agents: bool,
+    /// Colour for a done agent's dot during the first minute after it finished, so the one that
+    /// just finished stands out. Unset keeps the usual done colour.
+    pub recent_done_color: Option<String>,
+}
+
+impl AgentsSidebarConfig {
+    pub(crate) fn shows_changed(&self) -> bool {
+        std::iter::once(&self.rows)
+            .chain(self.rows_by_agent.values())
+            .flatten()
+            .flatten()
+            .any(|token| matches!(token.parts().0, AgentSidebarToken::Changed))
+    }
 }
 
 impl AgentsSidebarConfig {
@@ -505,6 +522,7 @@ impl Default for AgentsSidebarConfig {
             rows_by_agent: BTreeMap::new(),
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             show_tabs_without_agents: false,
+            recent_done_color: None,
         }
     }
 }
@@ -558,6 +576,8 @@ mod tests {
         assert!(config.agents.rows_by_agent.is_empty());
         assert_eq!(config.agents.row_gap, 0);
         assert!(!config.agents.show_tabs_without_agents);
+        assert_eq!(config.agents.recent_done_color, None);
+        assert!(!config.agents.shows_changed());
         assert_eq!(
             config.spaces.rows,
             vec![
@@ -576,9 +596,10 @@ mod tests {
 rows = [["state_icon", "workspace"], ["state_text", "agent", "$summary"], ["terminal_title", "terminal_title_stripped", "$terminal_title"]]
 row_gap = 1
 show_tabs_without_agents = true
+recent_done_color = "magenta"
 
 [ui.sidebar.agents.rows_by_agent]
-claude = [["terminal_title_stripped"], ["agent", "$model"]]
+claude = [["terminal_title_stripped", "changed"], ["agent", "$model"]]
 
 [ui.sidebar.spaces]
 rows = [["workspace"], ["$jj_status"]]
@@ -606,7 +627,10 @@ row_gap = 3
         assert_eq!(
             config.ui.sidebar.agents.rows_by_agent["claude"],
             vec![
-                vec![AgentSidebarToken::TerminalTitleStripped],
+                vec![
+                    AgentSidebarToken::TerminalTitleStripped,
+                    AgentSidebarToken::Changed,
+                ],
                 vec![
                     AgentSidebarToken::Agent,
                     AgentSidebarToken::Custom("model".into()),
@@ -615,6 +639,14 @@ row_gap = 3
         );
         assert_eq!(config.ui.sidebar.agents.row_gap, 1);
         assert!(config.ui.sidebar.agents.show_tabs_without_agents);
+        assert_eq!(
+            config.ui.sidebar.agents.recent_done_color.as_deref(),
+            Some("magenta")
+        );
+        assert!(
+            config.ui.sidebar.agents.shows_changed(),
+            "only in rows_by_agent"
+        );
         assert_eq!(
             config.ui.sidebar.spaces.rows[1],
             vec![SpaceSidebarToken::Custom("jj_status".into())]

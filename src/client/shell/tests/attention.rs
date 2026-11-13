@@ -24,6 +24,7 @@ fn agent(
         terminal_title_stripped: None,
         agent_status: status,
         state_change_seq: seq,
+        state_changed_at_unix_ms: None,
         state_labels: Vec::new(),
         tokens: tokens
             .iter()

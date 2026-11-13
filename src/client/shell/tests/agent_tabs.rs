@@ -72,6 +72,7 @@ fn shell(config: &str) -> (ClientShellState, FrameData) {
         terminal_title_stripped: None,
         agent_status: AgentStatus::Idle,
         state_change_seq: 1,
+        state_changed_at_unix_ms: None,
         state_labels: Vec::new(),
         tokens: vec![("pr".into(), "#12".into())],
         focused: true,

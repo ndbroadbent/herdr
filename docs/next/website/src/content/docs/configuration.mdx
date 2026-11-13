@@ -390,6 +390,7 @@ Agent rows accept these built-in tokens:
 - `agent` — detected or reported agent display name.
 - `terminal_title` — latest OSC 0/2 terminal title after safety normalization.
 - `terminal_title_stripped` — the terminal title with one recognized leading activity or spinner glyph and its following whitespace removed.
+- `changed` — how long ago the agent's state last changed: `0m` for the first minute, then `1m`, `2h`, `3d`, `1w`, `2mo`, `1y`. Omitted while the state dot is grey (unknown, or idle and marked inactive).
 - `$name` — custom pane metadata named `name`.
 
 Space rows accept these built-in tokens:

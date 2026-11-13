@@ -18,6 +18,10 @@ pub(super) struct AgentRow {
     pub(super) inactive: bool,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
+    /// Finished within the last minute, so its dot can stand out from older done agents.
+    pub(super) recent_done: bool,
+    /// When this entry next looks different as it ages (its `changed` label or its recent dot).
+    pub(super) repaint_at_unix_ms: Option<u64>,
 }
 
 pub(super) fn ordered_agent_pane_ids(
@@ -299,6 +303,7 @@ pub(super) fn agent_row(
         .agent
         .as_deref()
         .and_then(crate::detect::parse_agent_label);
+    let age = agent_age(agent, config);
     let rows = crate::ui::sidebar_agent_rows(
         &config.agents,
         crate::ui::AgentTokenContext {
@@ -314,6 +319,7 @@ pub(super) fn agent_row(
             terminal_title_stripped: agent.terminal_title_stripped.as_deref(),
             canonical_agent,
             tokens: &tokens,
+            changed: age.label.as_deref(),
         },
         state_text,
     );
@@ -324,7 +330,49 @@ pub(super) fn agent_row(
         inactive: super::attention::is_marked_inactive(agent),
         focused: agent.focused,
         rows,
+        recent_done: age.recent_done,
+        repaint_at_unix_ms: age.repaint_at_unix_ms,
     })
+}
+
+#[derive(Default)]
+struct AgentAge {
+    label: Option<String>,
+    recent_done: bool,
+    repaint_at_unix_ms: Option<u64>,
+}
+
+/// Only worked out when the sidebar shows it, so nothing repaints for an age nobody can see.
+fn agent_age(agent: &crate::protocol::ClientShellAgent, config: &ClientShellConfig) -> AgentAge {
+    use super::agent_age::{label, now_unix_ms, until_next_label, RECENT_MS};
+    let Some(changed_at) = agent.state_changed_at_unix_ms else {
+        return AgentAge::default();
+    };
+    // A grey dot means nothing to come back to, so its age would only be noise.
+    let grey = agent.agent_status == crate::api::schema::AgentStatus::Unknown
+        || (agent.agent_status == crate::api::schema::AgentStatus::Idle
+            && super::attention::is_marked_inactive(agent));
+    let shows_label = config.agents.shows_changed() && !grey;
+    let tracks_recent = config.agents.recent_done_color.is_some()
+        && agent.agent_status == crate::api::schema::AgentStatus::Done;
+    if !shows_label && !tracks_recent {
+        return AgentAge::default();
+    }
+    let now = now_unix_ms();
+    let age = now.saturating_sub(changed_at);
+    let recent_done = tracks_recent && age < RECENT_MS;
+    let repaint_after = [
+        shows_label.then(|| until_next_label(age)),
+        recent_done.then(|| RECENT_MS - age),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    AgentAge {
+        label: shows_label.then(|| label(age)),
+        recent_done,
+        repaint_at_unix_ms: repaint_after.map(|after| now + after),
+    }
 }
 
 /// The agents, plus the tabs with no agent when the sidebar is set to list them. Grouped, every
@@ -387,6 +435,8 @@ fn tab_rows_without_agents(
             inactive: false,
             focused: tab.focused,
             rows: crate::ui::sidebar_tab_rows(&config.agents, &tab.label),
+            recent_done: false,
+            repaint_at_unix_ms: None,
         })
         .collect()
 }
@@ -413,15 +463,29 @@ pub(super) fn render_agent_row(
             .fg(palette.subtext0)
             .add_modifier(Modifier::BOLD)
     };
+    if let Some(at) = row.repaint_at_unix_ms {
+        hits.agent_age_repaint_at_unix_ms = Some(
+            hits.agent_age_repaint_at_unix_ms
+                .map_or(at, |soonest| soonest.min(at)),
+        );
+    }
     let status_style = Style::default().fg(status_color(row.status, palette));
     let secondary = Style::default().fg(palette.overlay0);
     // A tab with no agent keeps the icon's column so its name lines up with the agents'.
     let icon = if row.tab_id.is_some() {
         (" ", Style::default())
     } else {
+        let color = row
+            .recent_done
+            .then_some(config.agents.recent_done_color.as_deref())
+            .flatten()
+            .map_or_else(
+                || agent_status_color(row.status, row.inactive, palette),
+                crate::config::parse_color,
+            );
         (
             status_icon(row.status, config.status_indicators),
-            Style::default().fg(agent_status_color(row.status, row.inactive, palette)),
+            Style::default().fg(color),
         )
     };
     let rows = if row.rows.is_empty() {

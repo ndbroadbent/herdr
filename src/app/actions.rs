@@ -1808,6 +1808,10 @@ impl AppState {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
+                terminal.last_agent_state_change_unix_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|elapsed| elapsed.as_millis() as u64);
                 terminal.last_agent_completion_seq = (!suppress_completion
                     && is_completion_transition(&change))
                 .then_some(self.next_agent_state_change_seq);
@@ -3237,6 +3241,11 @@ mod tests {
                 terminal.last_agent_state_change_seq
             );
         }
+        assert_eq!(
+            terminal.last_agent_state_change_unix_ms.is_some(),
+            terminal.last_agent_state_change_seq.is_some(),
+            "every state change is timed"
+        );
         app.assert_invariants_for_test();
     }
 
