@@ -450,6 +450,15 @@ impl ClientShellState {
         ((pointer + grab_offset - origin) as f32 / f32::from(length.max(1))).clamp(0.1, 0.9)
     }
 
+    /// The tab whose agent sidebar entry (a tab with no agent) is under `point`.
+    fn agent_tab_at(&self, point: (u16, u16)) -> Option<String> {
+        self.hits
+            .agent_tabs
+            .iter()
+            .find(|(rect, _)| super::contains(*rect, point))
+            .map(|(_, tab_id)| tab_id.clone())
+    }
+
     fn tab_drop_index_at(&self, point: (u16, u16)) -> Option<usize> {
         let snapshot = self.snapshot.as_deref()?;
         let workspace_id = snapshot.focused_workspace_id.as_deref()?;
@@ -1846,6 +1855,11 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if let Some(tab_id) = self.agent_tab_at(point) {
+                    self.open_tab_context_menu(tab_id, mouse.column, mouse.row);
+                    outcome.repaint = true;
+                    return;
+                }
                 let workspace_id = (!self.sidebar_collapsed)
                     .then(|| self.active_endpoint_workspace_at(point))
                     .flatten();
@@ -2175,6 +2189,15 @@ impl ClientShellState {
                     self.push_endpoint_method(
                         crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
                             pane_id,
+                        }),
+                        outcome,
+                    );
+                    return;
+                }
+                if let Some(tab_id) = self.agent_tab_at(point) {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::TabFocus(crate::api::schema::TabTarget {
+                            tab_id,
                         }),
                         outcome,
                     );

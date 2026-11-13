@@ -1079,6 +1079,12 @@
           "description": "Blank terminal rows between expanded Agent sidebar entries. Set to 1 to restore the previous spacing."
         },
         {
+          "key": "ui.sidebar.agents.show_tabs_without_agents",
+          "type": "boolean",
+          "default": "false",
+          "description": "Also list tabs that have no agent: in tab bar order among the agents when the list is grouped, or after the agents when it is sorted by priority. They show the tab name without a state dot and use as many lines as an agent entry. Click one to switch to the tab, or right-click it for the tab menu."
+        },
+        {
           "key": "ui.sidebar.agents.rows",
           "type": "list of token rows",
           "default": "[[\"state_icon\", \"machine\", \"workspace\", \"tab\"], [\"agent\"]]",

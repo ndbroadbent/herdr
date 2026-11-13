@@ -132,6 +132,32 @@ pub(crate) fn agent_rows(
         .collect()
 }
 
+/// A tab with no agent, laid out like an agent entry: one line per configured row, keeping only
+/// the state icon slot and the tab name, so the name lines up with agents' and the entry is as
+/// tall as theirs. Rows with neither stay as blank lines.
+pub(crate) fn tab_rows(config: &AgentsSidebarConfig, tab: &str) -> Vec<Vec<ResolvedToken>> {
+    config
+        .rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .filter_map(|configured| {
+                    let (token, style) = configured.parts();
+                    match token {
+                        AgentSidebarToken::StateIcon => {
+                            Some(ResolvedToken::new(ResolvedTokenKind::StateIcon, style))
+                        }
+                        AgentSidebarToken::Tab => configured.style_for_value(tab).map(|style| {
+                            ResolvedToken::new(ResolvedTokenKind::Tab(tab.to_string()), style)
+                        }),
+                        _ => None,
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 pub(crate) struct SpaceTokenContext<'a> {
     pub(crate) workspace: &'a str,
     pub(crate) branch: Option<&'a str>,

@@ -12,6 +12,8 @@ use super::*;
 
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
+    /// Set when this entry stands for a tab with no agent rather than for an agent.
+    pub(super) tab_id: Option<String>,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) inactive: bool,
     pub(super) focused: bool,
@@ -69,7 +71,7 @@ pub(super) fn render_agent_panel(
         return;
     }
 
-    let rows = agent_rows(snapshot, config, None);
+    let rows = agent_and_tab_rows(snapshot, config);
     render_agent_list(
         buffer,
         area,
@@ -83,7 +85,10 @@ pub(super) fn render_agent_panel(
         hits,
         |row| row.rows.len(),
         |buffer, rect, row, hits| {
-            hits.agents.push((rect, row.pane_id.clone()));
+            match &row.tab_id {
+                Some(tab_id) => hits.agent_tabs.push((rect, tab_id.clone())),
+                None => hits.agents.push((rect, row.pane_id.clone())),
+            }
             render_agent_row(buffer, rect, row, config, hits);
         },
     );
@@ -314,11 +319,76 @@ pub(super) fn agent_row(
     );
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
+        tab_id: None,
         status: agent.agent_status,
         inactive: super::attention::is_marked_inactive(agent),
         focused: agent.focused,
         rows,
     })
+}
+
+/// The agents, plus the tabs with no agent when the sidebar is set to list them. Grouped, every
+/// entry takes its tab's place in the tab bar order; by priority, the tabs follow the agents.
+fn agent_and_tab_rows(snapshot: &ClientShellSnapshot, config: &ClientShellConfig) -> Vec<AgentRow> {
+    let mut rows = agent_rows(snapshot, config, None);
+    let tabs = tab_rows_without_agents(snapshot, config);
+    if tabs.is_empty() {
+        return rows;
+    }
+    rows.extend(tabs);
+    if config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces {
+        let tab_positions = snapshot
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(position, tab)| (tab.tab_id.as_str(), position))
+            .collect::<HashMap<_, _>>();
+        let agent_tabs = snapshot
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.as_str(), agent.tab_id.as_str()))
+            .collect::<HashMap<_, _>>();
+        // Stable, so agents sharing a tab keep their order.
+        rows.sort_by_key(|row| {
+            let tab_id = row
+                .tab_id
+                .as_deref()
+                .or_else(|| agent_tabs.get(row.pane_id.as_str()).copied());
+            tab_id
+                .and_then(|tab_id| tab_positions.get(tab_id).copied())
+                .unwrap_or(usize::MAX)
+        });
+    }
+    rows
+}
+
+/// Tabs where nothing has an agent, in tab order, when the sidebar is set to list them. A filtered
+/// agent view only lists the agents it matched.
+fn tab_rows_without_agents(
+    snapshot: &ClientShellSnapshot,
+    config: &ClientShellConfig,
+) -> Vec<AgentRow> {
+    if !config.agents.show_tabs_without_agents || snapshot.agent_view_label.is_some() {
+        return Vec::new();
+    }
+    snapshot
+        .tabs
+        .iter()
+        .filter(|tab| {
+            !snapshot
+                .agents
+                .iter()
+                .any(|agent| agent.tab_id == tab.tab_id)
+        })
+        .map(|tab| AgentRow {
+            pane_id: String::new(),
+            tab_id: Some(tab.tab_id.clone()),
+            status: crate::api::schema::AgentStatus::Unknown,
+            inactive: false,
+            focused: tab.focused,
+            rows: crate::ui::sidebar_tab_rows(&config.agents, &tab.label),
+        })
+        .collect()
 }
 
 pub(super) fn render_agent_row(
@@ -345,10 +415,15 @@ pub(super) fn render_agent_row(
     };
     let status_style = Style::default().fg(status_color(row.status, palette));
     let secondary = Style::default().fg(palette.overlay0);
-    let icon = (
-        status_icon(row.status, config.status_indicators),
-        Style::default().fg(agent_status_color(row.status, row.inactive, palette)),
-    );
+    // A tab with no agent keeps the icon's column so its name lines up with the agents'.
+    let icon = if row.tab_id.is_some() {
+        (" ", Style::default())
+    } else {
+        (
+            status_icon(row.status, config.status_indicators),
+            Style::default().fg(agent_status_color(row.status, row.inactive, palette)),
+        )
+    };
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
             kind: crate::ui::ResolvedTokenKind::StateIcon,

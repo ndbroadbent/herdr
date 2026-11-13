@@ -94,6 +94,8 @@ pub(super) struct ShellHitMap {
     pub(super) popup: Option<PaneHit>,
     pub(super) pane_splits: Vec<PaneSplitHit>,
     pub(super) agents: Vec<(Rect, String)>,
+    /// Agent sidebar entries for tabs with no agent, by tab id.
+    pub(super) agent_tabs: Vec<(Rect, String)>,
     /// Clickable sidebar tokens and their URLs. They sit on top of `agents`.
     pub(super) agent_links: Vec<(Rect, String)>,
     pub(super) endpoint_agents: Vec<(Rect, ClientEndpointId, String)>,
