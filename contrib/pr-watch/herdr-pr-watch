@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep herdr's sidebar tokens in step with each session's PR, CI and deploy queue state.
+"""Keep herdr's sidebar tokens in step with each session's PR, CI, deploy queue and Terraform state.
 
 Run once per interval (see the launchd plist next to this file). For every Claude session in the
 running herdr server it works out the session's PR, then writes these pane metadata tokens:
@@ -8,6 +8,14 @@ running herdr server it works out the session's PR, then writes these pane metad
     ci_status         a Nerd Font check, x or dot (running)
     ci_url            its CircleCI pipeline link
     stage             where the PR is in the deploy queue, or "merged"/"closed"
+    tf, tf_url        the session's Terraform claims in the deploy queue, and its page
+
+The tf token shows the session's most urgent claim (a session can hold several):
+
+    tf no client <components>   a claim whose client stopped checking in; it expires soon
+    tf apply <component>        an apply is running
+    tf wait <components>        in line behind another session's claim
+    tf <components>             holding the claim
 
 A session's PR comes from, in order:
 
@@ -20,7 +28,8 @@ A session's PR comes from, in order:
        `gh pr checkout <number or url>` in its transcript
     4. its most recent finished deploy queue entry
 
-A checkout by number is taken to be in DocSpring/docspring unless it passes --repo.
+A checkout by number is taken to be in DocSpring/docspring unless it passes --repo. Claims, like
+queue entries, carry the session's `claude --resume` command.
 
 Merged PRs stay visible for 15 minutes and closed ones for a day, then their tokens are cleared.
 
@@ -52,7 +61,11 @@ CLAUDE_PROJECTS = Path("~/.claude/projects").expanduser()
 
 STATE_VERSION = 2
 SOURCE = "pr-watch"
-OWNED_TOKENS = ("pr", "pr_url", "ci_url", "ci_status", "stage")
+PR_TOKENS = ("pr", "pr_url", "ci_url", "ci_status", "stage")
+TF_TOKENS = ("tf", "tf_url")
+OWNED_TOKENS = PR_TOKENS + TF_TOKENS
+# The deploy queue's own default, for a queue that doesn't say.
+CLAIM_WARN_AFTER_SECS = 120
 HIDE_MERGED_AFTER_SECS = 15 * 60
 HIDE_CLOSED_AFTER_SECS = 24 * 60 * 60
 MAX_TOKEN_VALUE_LEN = 80
@@ -266,6 +279,43 @@ def index_queue(queue):
         if entry_ref(entry):
             index.unfinished[entry_ref(entry)] = entry
     return index
+
+
+def index_claims(queue):
+    """Each session's unfinished Terraform claims, by session id."""
+    terraform = queue.get("terraform") or {}
+    by_session = {}
+    for claim in terraform.get("held", []) + terraform.get("waiting", []):
+        match = RESUME_SESSION.search(claim.get("resume") or "")
+        if match:
+            by_session.setdefault(match.group(1), []).append(claim)
+    return by_session
+
+
+def claim_label(claim, now, warn_after):
+    """(urgency, label, names) for one claim; the lowest urgency is shown."""
+    components = claim.get("components") or []
+    if now - (claim.get("last_seen_at") or now) >= warn_after:
+        return 0, "tf no client", components
+    if claim.get("applying"):
+        return 1, "tf apply", [claim["applying"]]
+    if claim.get("state") == "waiting":
+        return 2, "tf wait", components
+    return 3, "tf", components
+
+
+def terraform_tokens(claims, queue, now):
+    """The tf tokens for a session's claims: its most urgent ones, with their components."""
+    if not claims:
+        return {}
+    warn_after = queue.get("warn_after_secs") or CLAIM_WARN_AFTER_SECS
+    labels = [claim_label(claim, now, warn_after) for claim in claims]
+    urgency, label = min(labels)[:2]
+    names = [name for rank, _, claim_names in labels if rank == urgency for name in claim_names]
+    value = " ".join([label] + list(dict.fromkeys(names)))
+    if len(value) > MAX_TOKEN_VALUE_LEN:
+        value = value[: MAX_TOKEN_VALUE_LEN - 1] + "…"
+    return {"tf": value, "tf_url": QUEUE_URL.rsplit("/api/", 1)[0]}
 
 
 def entry_ref(entry):
@@ -484,6 +534,8 @@ def run(dry_run):
     state = load_state()
     queue = fetch_queue()
     index = index_queue(queue)
+    claims = index_claims(queue) if queue is not None else None
+    now = time.time()
 
     claude_agents = [
         agent
@@ -514,16 +566,23 @@ def run(dry_run):
         if ref is None:
             desired = {}
         elif ref not in prs:
-            continue
+            # GitHub didn't answer: keep what the PR showed.
+            desired = {k: current[k] for k in PR_TOKENS if k in current}
         else:
             pull = prs[ref]
             wanted_commits.add(pull.get("headRefOid"))
             desired = desired_tokens(pull, index.unfinished.get(ref), queue is not None, current, state)
+        if claims is None:
+            # Off the tailnet: keep the claims the sidebar last showed.
+            desired.update({k: current[k] for k in TF_TOKENS if k in current})
+        else:
+            session_id = agent["agent_session"]["value"]
+            desired.update(terraform_tokens(claims.get(session_id), queue, now))
         if apply_tokens(agent, desired, dry_run):
             changes += 1
         if dry_run and desired:
             shown = {k: v for k, v in desired.items() if not k.endswith("_url")}
-            print(f"{pane_id:8} {ref:30} {shown}")
+            print(f"{pane_id:8} {ref or '-':30} {shown}")
     state["pipelines"] = {k: v for k, v in state["pipelines"].items() if k in wanted_commits}
 
     if dry_run:

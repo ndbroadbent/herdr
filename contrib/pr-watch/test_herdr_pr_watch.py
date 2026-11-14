@@ -1,4 +1,4 @@
-"""Tests for herdr-pr-watch's choice of PR. Run: python3 contrib/pr-watch/test_herdr_pr_watch.py"""
+"""Tests for herdr-pr-watch's choice of PR and the tokens it writes. Run: python3 contrib/pr-watch/test_herdr_pr_watch.py"""
 
 import importlib.machinery
 import importlib.util
@@ -223,6 +223,54 @@ class FinishedPrTests(unittest.TestCase):
         with mock.patch.object(watch, "report_tokens") as report:
             watch.apply_tokens(pane, self.merged(minutes=16), dry_run=False)
         report.assert_called_once_with("w1:p1", {}, ["pr", "pr_url", "stage"])
+
+
+def claim(state="held", components=("racks/us",), last_seen_at=1000, applying=None, resume=RESUME):
+    return {
+        "state": state,
+        "components": list(components),
+        "last_seen_at": last_seen_at,
+        "applying": applying,
+        "resume": f"cd /x && {resume}",
+    }
+
+
+class TerraformTests(unittest.TestCase):
+    def tf(self, *claims, now=1010):
+        queue = {"warn_after_secs": 120, "terraform": {"held": [], "waiting": []}}
+        for each in claims:
+            queue["terraform"]["waiting" if each["state"] == "waiting" else "held"].append(each)
+        return watch.terraform_tokens(watch.index_claims(queue).get(SESSION), queue, now).get("tf")
+
+    def test_claims_belong_to_the_session_in_their_resume_command(self):
+        other = claim(resume="claude --resume 99999999-2222-3333-4444-555555555555")
+        self.assertIsNone(self.tf(other))
+        self.assertEqual(self.tf(claim(components=("racks/us", "resources/us"))), "tf racks/us resources/us")
+
+    def test_the_most_urgent_claim_shows(self):
+        held = claim(components=("cloudflare",))
+        waiting = claim(state="waiting", components=("racks/eu",))
+        applying = claim(applying="racks/us", components=("racks/us", "resources/us"))
+        lost = claim(components=("racks/staging",), last_seen_at=1010 - 120)
+        self.assertEqual(self.tf(held, claim(components=("racks/us", "cloudflare"))), "tf cloudflare racks/us")
+        self.assertEqual(self.tf(held, waiting), "tf wait racks/eu")
+        self.assertEqual(self.tf(held, waiting, applying), "tf apply racks/us")
+        self.assertEqual(self.tf(held, waiting, applying, lost), "tf no client racks/staging")
+
+    def test_off_the_tailnet_the_claims_stay_and_back_on_it_they_clear(self):
+        pane = agent(tf="tf racks/us", tf_url="https://q")
+        with mock.patch.object(watch, "list_agents", return_value=[dict(pane, agent="claude")]), \
+                mock.patch.object(watch, "load_state", return_value={"transcripts": {}, "pipelines": {}}), \
+                mock.patch.object(watch, "save_state"), \
+                mock.patch.object(watch, "scan_transcript"), \
+                mock.patch.object(watch, "fetch_prs", return_value={}), \
+                mock.patch.object(watch, "report_tokens") as report:
+            with mock.patch.object(watch, "fetch_queue", return_value=None):
+                watch.run(dry_run=False)
+            report.assert_not_called()
+            with mock.patch.object(watch, "fetch_queue", return_value={"terraform": {"held": [], "waiting": []}}):
+                watch.run(dry_run=False)
+            report.assert_called_once_with("w1:p1", {}, ["tf", "tf_url"])
 
 
 if __name__ == "__main__":

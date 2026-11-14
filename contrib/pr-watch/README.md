@@ -1,6 +1,6 @@
 # herdr-pr-watch
 
-Fills herdr's sidebar with each session's PR, CI and deploy queue state. Herdr itself knows nothing
+Fills herdr's sidebar with each session's PR, CI, deploy queue state and Terraform claims. Herdr itself knows nothing
 about GitHub: this script writes pane metadata tokens, and `[ui.sidebar.agents]` in `config.toml`
 decides how they look. The script's docstring lists the tokens and how a session's PR is found.
 
@@ -24,7 +24,7 @@ launchctl bootout "gui/$(id -u)/com.ndbroadbent.herdr-pr-watch"
 ```
 
 It needs `gh`, and a CircleCI token in `CIRCLE_TOKEN` or `~/.circleci/cli.yml` to link the CI status.
-The deploy queue is tailnet only; off the tailnet the `stage` token keeps its last value. Its cursor
+The deploy queue is tailnet only; off the tailnet the `stage` and `tf` tokens keep their last values. Its cursor
 into each transcript and its pipeline cache live in `~/.cache/herdr-pr-watch/state.json`, and
 deleting that file only costs one full rescan.
 
