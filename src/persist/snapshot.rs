@@ -113,6 +113,10 @@ pub struct PaneSnapshot {
     pub launch_argv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata_tokens: HashMap<String, String>,
+    /// When the pane's agent last changed state, in milliseconds since the Unix epoch, so a
+    /// restart doesn't make every agent look freshly changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_changed_at_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -402,6 +406,8 @@ fn capture_tab(
                 agent_resume,
                 launch_argv,
                 metadata_tokens,
+                state_changed_at_unix_ms: terminal
+                    .and_then(|terminal| terminal.last_agent_state_change_unix_ms),
             },
         );
     }
@@ -722,6 +728,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 metadata_tokens: Default::default(),
+                state_changed_at_unix_ms: None,
             },
         );
         panes.insert(
@@ -735,6 +742,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 metadata_tokens: Default::default(),
+                state_changed_at_unix_ms: None,
             },
         );
 
@@ -1422,6 +1430,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 metadata_tokens: Default::default(),
+                state_changed_at_unix_ms: None,
             },
         );
         panes.insert(
@@ -1437,6 +1446,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 metadata_tokens: Default::default(),
+                state_changed_at_unix_ms: None,
             },
         );
 
@@ -1538,6 +1548,28 @@ mod tests {
         assert!(pane.metadata_tokens.is_empty());
         let saved = serde_json::to_value(pane).unwrap();
         assert!(saved.get("metadata_tokens").is_none());
+        assert!(saved.get("state_changed_at_unix_ms").is_none());
+    }
+
+    #[test]
+    fn snapshot_saves_when_the_agent_last_changed_state() {
+        let mut state = state_with_workspaces(&["aged"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .last_agent_state_change_unix_ms = Some(1_700_000_000_000);
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].tabs[0].panes[&root.raw()].state_changed_at_unix_ms,
+            Some(1_700_000_000_000)
+        );
     }
 
     #[test]

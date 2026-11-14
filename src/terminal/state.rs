@@ -156,6 +156,9 @@ pub struct TerminalState {
     pub last_agent_state_change_seq: Option<u64>,
     /// Wall-clock time of that change, in milliseconds since the Unix epoch.
     pub last_agent_state_change_unix_ms: Option<u64>,
+    /// The time above came from the last session and the agent hasn't settled since it was
+    /// restored, so its start-up state changes shouldn't replace it.
+    keeping_restored_state_change_time: bool,
     pub last_agent_completion_seq: Option<u64>,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
@@ -197,6 +200,7 @@ impl TerminalState {
             state: AgentState::Unknown,
             last_agent_state_change_seq: None,
             last_agent_state_change_unix_ms: None,
+            keeping_restored_state_change_time: false,
             last_agent_completion_seq: None,
             revision: 0,
             launch_argv: None,
@@ -2312,6 +2316,27 @@ impl TerminalState {
         });
     }
 
+    /// Brings back the time the agent last changed state before a restart.
+    pub fn restore_agent_state_change_time(&mut self, unix_ms: Option<u64>) {
+        self.last_agent_state_change_unix_ms = unix_ms;
+        self.keeping_restored_state_change_time = unix_ms.is_some();
+    }
+
+    /// Records when the agent changed state. A restored agent passes through a few states as it
+    /// starts up again (unknown, sometimes working, then idle or blocked); the time from before
+    /// the restart stands until it has settled, so only what it does after that counts. Returns
+    /// whether the time changed.
+    pub fn record_agent_state_change_time(&mut self, state: AgentState, unix_ms: u64) -> bool {
+        if self.keeping_restored_state_change_time {
+            if matches!(state, AgentState::Idle | AgentState::Blocked) {
+                self.keeping_restored_state_change_time = false;
+            }
+            return false;
+        }
+        self.last_agent_state_change_unix_ms = Some(unix_ms);
+        true
+    }
+
     pub fn clear_agent_name(&mut self) {
         self.codex_prompt_ready = false;
         if self
@@ -2341,6 +2366,7 @@ impl TerminalState {
         self.state = AgentState::Unknown;
         self.last_agent_state_change_seq = None;
         self.last_agent_state_change_unix_ms = None;
+        self.keeping_restored_state_change_time = false;
         self.last_agent_completion_seq = None;
         self.launch_argv = None;
         self.respawn_shell_on_exit = false;
@@ -2460,6 +2486,38 @@ mod tests {
 
     fn test_terminal() -> TerminalState {
         TerminalState::new(TerminalId::alloc(), "/tmp".into())
+    }
+
+    #[test]
+    fn a_restored_agent_keeps_its_saved_age_until_it_settles() {
+        let mut terminal = test_terminal();
+        terminal.restore_agent_state_change_time(Some(1_000));
+
+        // Starting up again: unknown, a burst of work while it resumes, then idle.
+        assert!(!terminal.record_agent_state_change_time(AgentState::Working, 5_000));
+        assert!(!terminal.record_agent_state_change_time(AgentState::Idle, 6_000));
+        assert_eq!(terminal.last_agent_state_change_unix_ms, Some(1_000));
+
+        // Real work after that counts.
+        assert!(terminal.record_agent_state_change_time(AgentState::Working, 9_000));
+        assert_eq!(terminal.last_agent_state_change_unix_ms, Some(9_000));
+    }
+
+    #[test]
+    fn a_restored_agent_that_was_waiting_on_you_settles_when_it_is_blocked_again() {
+        let mut terminal = test_terminal();
+        terminal.restore_agent_state_change_time(Some(1_000));
+        assert!(!terminal.record_agent_state_change_time(AgentState::Blocked, 5_000));
+        assert!(terminal.record_agent_state_change_time(AgentState::Working, 9_000));
+        assert_eq!(terminal.last_agent_state_change_unix_ms, Some(9_000));
+    }
+
+    #[test]
+    fn without_a_saved_age_every_change_is_timed() {
+        let mut terminal = test_terminal();
+        terminal.restore_agent_state_change_time(None);
+        assert!(terminal.record_agent_state_change_time(AgentState::Idle, 5_000));
+        assert_eq!(terminal.last_agent_state_change_unix_ms, Some(5_000));
     }
 
     fn test_session_path(name: &str) -> String {

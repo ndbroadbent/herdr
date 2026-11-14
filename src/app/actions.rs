@@ -1808,10 +1808,13 @@ impl AppState {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
-                terminal.last_agent_state_change_unix_ms = std::time::SystemTime::now()
+                let now_unix_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|elapsed| elapsed.as_millis() as u64);
+                    .map_or(0, |elapsed| elapsed.as_millis() as u64);
+                if terminal.record_agent_state_change_time(change.state, now_unix_ms) {
+                    // Saved so a restart keeps each agent's age.
+                    self.session_dirty = true;
+                }
                 terminal.last_agent_completion_seq = (!suppress_completion
                     && is_completion_transition(&change))
                 .then_some(self.next_agent_state_change_seq);

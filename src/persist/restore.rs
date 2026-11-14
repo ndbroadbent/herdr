@@ -451,6 +451,7 @@ fn unavailable_restored_terminal(
     if let Some(pane) = pane {
         terminal.metadata_tokens =
             crate::metadata_tokens::MetadataTokens::from_persisted(pane.metadata_tokens.clone());
+        terminal.restore_agent_state_change_time(pane.state_changed_at_unix_ms);
         terminal.manual_label = pane.label.clone();
         terminal.launch_argv = pane.launch_argv.clone();
         if let Some(session) = restored_terminal_agent_session(pane.agent_session.as_ref(), false) {
@@ -540,6 +541,7 @@ fn restore_tab(
                 .map(|p| p.metadata_tokens.clone())
                 .unwrap_or_default(),
         );
+        let saved_state_changed_at = saved_pane.and_then(|p| p.state_changed_at_unix_ms);
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -601,6 +603,7 @@ fn restore_tab(
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
             terminal.metadata_tokens = saved_metadata_tokens;
+            terminal.restore_agent_state_change_time(saved_state_changed_at);
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
@@ -697,6 +700,7 @@ fn restore_tab(
                 let terminal_id = TerminalId::alloc();
                 let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone());
                 terminal.metadata_tokens = saved_metadata_tokens;
+                terminal.restore_agent_state_change_time(saved_state_changed_at);
                 if was_imported {
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
@@ -1564,6 +1568,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             metadata_tokens: Default::default(),
+                            state_changed_at_unix_ms: None,
                         },
                     )]),
                     zoomed: false,
@@ -1647,6 +1652,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 metadata_tokens: Default::default(),
+                                state_changed_at_unix_ms: None,
                             },
                         ),
                         (
@@ -1660,6 +1666,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 metadata_tokens: Default::default(),
+                                state_changed_at_unix_ms: None,
                             },
                         ),
                     ]),
@@ -1715,6 +1722,7 @@ mod tests {
                     agent_resume: None,
                     launch_argv: None,
                     metadata_tokens: Default::default(),
+                    state_changed_at_unix_ms: None,
                 },
             )
         };
@@ -1732,6 +1740,7 @@ mod tests {
             agent_resume: None,
             launch_argv: None,
             metadata_tokens: Default::default(),
+            state_changed_at_unix_ms: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1885,6 +1894,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             metadata_tokens: Default::default(),
+                            state_changed_at_unix_ms: None,
                         },
                     )]),
                     zoomed: false,
@@ -2192,6 +2202,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 metadata_tokens: Default::default(),
+                state_changed_at_unix_ms: None,
             },
         );
         let mut history = SessionHistorySnapshot {
@@ -2277,6 +2288,7 @@ mod tests {
                                 (MARK_UNREAD_TOKEN.to_string(), "1".to_string()),
                                 ("pr".to_string(), "#12".to_string()),
                             ]),
+                            state_changed_at_unix_ms: Some(1_700_000_000_000),
                         },
                     )]),
                     zoomed: false,
@@ -2312,10 +2324,15 @@ mod tests {
             .values()
             .next()
             .expect("pane should restore");
-        let tokens = &terminals
+        let terminal = terminals
             .get(&pane.attached_terminal_id)
-            .expect("terminal should restore")
-            .metadata_tokens;
+            .expect("terminal should restore");
+        assert_eq!(
+            terminal.last_agent_state_change_unix_ms,
+            Some(1_700_000_000_000),
+            "the agent keeps its age"
+        );
+        let tokens = &terminal.metadata_tokens;
         assert!(tokens.contains(MARK_INACTIVE_TOKEN));
         assert!(tokens.contains(MARK_UNREAD_TOKEN));
         assert_eq!(tokens.values().get("pr").map(String::as_str), Some("#12"));
