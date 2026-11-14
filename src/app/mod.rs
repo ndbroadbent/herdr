@@ -2637,6 +2637,75 @@ mod tests {
         assert_eq!(resolved.terminal_id, terminal_id);
     }
 
+    /// One workspace per tab name, each tab running a Pi agent unless `agent` is false.
+    fn app_with_named_tabs(tabs: &[(&str, bool)]) -> App {
+        let mut app = test_app();
+        app.state.workspaces = tabs
+            .iter()
+            .map(|(name, _)| {
+                let mut workspace = Workspace::test_new(&format!("tab-target-{name}"));
+                workspace.tabs[0].custom_name = Some((*name).to_string());
+                workspace
+            })
+            .collect();
+        app.state.ensure_test_terminals();
+        for (ws_idx, (_, agent)) in tabs.iter().enumerate() {
+            if *agent {
+                let pane = app.state.workspaces[ws_idx].tabs[0].root_pane;
+                let terminal_id = app.state.workspaces[ws_idx]
+                    .terminal_id(pane)
+                    .unwrap()
+                    .clone();
+                app.state
+                    .terminals
+                    .get_mut(&terminal_id)
+                    .unwrap()
+                    .set_detected_state(
+                        Some(crate::detect::Agent::Pi),
+                        crate::detect::AgentState::Idle,
+                    );
+            }
+        }
+        app
+    }
+
+    #[test]
+    fn agent_target_finds_the_agent_by_its_tab_name() {
+        let app = app_with_named_tabs(&[("blog", true), ("ci", true), ("notes", false)]);
+        let ci_pane = app.state.workspaces[1].tabs[0].root_pane;
+
+        let resolved = app.resolve_agent_target("ci").unwrap();
+        assert_eq!((resolved.ws_idx, resolved.pane_id), (1, ci_pane));
+
+        assert!(matches!(
+            app.resolve_agent_target("notes"),
+            Err(crate::app::terminal_targets::TerminalTargetError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn an_agent_name_wins_over_a_tab_name_and_two_tabs_with_one_name_are_ambiguous() {
+        let mut app = app_with_named_tabs(&[("ci", true), ("ci", true), ("other", true)]);
+        let other_pane = app.state.workspaces[2].tabs[0].root_pane;
+        assert!(matches!(
+            app.resolve_agent_target("ci"),
+            Err(crate::app::terminal_targets::TerminalTargetError::Ambiguous { candidates, .. })
+                if candidates.len() == 2
+        ));
+
+        let terminal_id = app.state.workspaces[2]
+            .terminal_id(other_pane)
+            .unwrap()
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("ci".into());
+        let resolved = app.resolve_agent_target("ci").unwrap();
+        assert_eq!((resolved.ws_idx, resolved.pane_id), (2, other_pane));
+    }
+
     #[test]
     fn agent_target_treats_legacy_pane_syntax_as_a_name() {
         let mut app = test_app();

@@ -98,6 +98,23 @@ impl App {
             return Ok(resolved);
         }
 
+        // People call a session by the tab it runs in, so a tab's custom name finds the agent in
+        // it, as long as only one agent matches.
+        let tab_matches: Vec<_> = self
+            .terminal_targets()
+            .into_iter()
+            .filter(|candidate| {
+                self.state.workspaces[candidate.ws_idx].tabs[candidate.tab_idx]
+                    .custom_name
+                    .as_deref()
+                    == Some(target)
+                    && self.target_is_agent(candidate)
+            })
+            .collect();
+        if let Some(resolved) = self.single_terminal_match(target, tab_matches)? {
+            return Ok(resolved);
+        }
+
         Err(TerminalTargetError::NotFound {
             target: target.to_string(),
         })
