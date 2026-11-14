@@ -1470,7 +1470,7 @@
           "key": "session.resume_extra_args",
           "type": "table of string lists",
           "default": "{}",
-          "description": "Extra arguments inserted after the agent executable when a native agent session resumes, keyed by agent label, e.g. claude = [\"--dangerously-skip-permissions\"] resumes as claude --dangerously-skip-permissions --resume <id>. Restart the server to apply."
+          "description": "Extra arguments inserted after the agent executable when a native agent session resumes, keyed by agent label, e.g. claude = [\"--dangerously-skip-permissions\"] resumes as claude --dangerously-skip-permissions --resume <id>. {tab} stands for the custom name of the tab the agent is restored into, so claude = [\"--name\", \"{tab}\"] names each Claude session after its tab; in a tab with no custom name the argument is left out, along with the option just before it. Restart the server to apply."
         }
       ]
     },

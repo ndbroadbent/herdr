@@ -208,12 +208,54 @@ pub(crate) fn set_resume_extra_args(extra_args: BTreeMap<String, Vec<String>>) {
 }
 
 pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+    plan_in_tab(source, agent, session_ref, None)
+}
+
+/// Placeholder in `[session.resume_extra_args]` for the name of the tab being restored.
+const TAB_PLACEHOLDER: &str = "{tab}";
+
+/// Like [`plan`], for an agent restored into a tab with this custom name, which fills any
+/// `{tab}` placeholder in the extra arguments.
+pub fn plan_in_tab(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    tab: Option<&str>,
+) -> Option<AgentResumePlan> {
     let extra_args = RESUME_EXTRA_ARGS
         .read()
         .ok()
         .and_then(|extra_args| extra_args.get(agent).cloned())
         .unwrap_or_default();
-    plan_with_extra_args(source, agent, session_ref, &extra_args)
+    plan_with_extra_args(
+        source,
+        agent,
+        session_ref,
+        &expand_tab_placeholder(&extra_args, tab),
+    )
+}
+
+/// Fills `{tab}` with the tab's name. Without a usable name (none set, or one that can't be
+/// typed safely) an argument holding the placeholder is left out, along with the option just
+/// before it, so `["--name", "{tab}"]` disappears and the other extra arguments still apply.
+fn expand_tab_placeholder(extra_args: &[String], tab: Option<&str>) -> Vec<String> {
+    let tab = tab.filter(|tab| {
+        !tab.is_empty() && validate_resume_argv(&["agent".into(), (*tab).to_string()]).is_ok()
+    });
+    let mut expanded: Vec<String> = Vec::new();
+    for arg in extra_args {
+        if !arg.contains(TAB_PLACEHOLDER) {
+            expanded.push(arg.clone());
+        } else if let Some(tab) = tab {
+            expanded.push(arg.replace(TAB_PLACEHOLDER, tab));
+        } else if expanded
+            .last()
+            .is_some_and(|option| option.starts_with('-') && !option.contains('='))
+        {
+            expanded.pop();
+        }
+    }
+    expanded
 }
 
 /// Inserts `extra_args` right after the executable, so they also reach agents
@@ -521,6 +563,30 @@ mod tests {
                 "resume",
                 "codex-session"
             ]
+        );
+    }
+
+    #[test]
+    fn tab_placeholder_takes_the_tab_name_or_drops_out_with_its_option() {
+        let extra = argv(&["--dangerously-skip-permissions", "--name", "{tab}"]);
+        assert_eq!(
+            expand_tab_placeholder(&extra, Some("ci")),
+            argv(&["--dangerously-skip-permissions", "--name", "ci"])
+        );
+        for tab in [None, Some(""), Some("it's")] {
+            assert_eq!(
+                expand_tab_placeholder(&extra, tab),
+                argv(&["--dangerously-skip-permissions"]),
+                "{tab:?}"
+            );
+        }
+        assert_eq!(
+            expand_tab_placeholder(&argv(&["--name={tab}", "-v"]), None),
+            argv(&["-v"])
+        );
+        assert_eq!(
+            expand_tab_placeholder(&argv(&["--title=pr {tab}"]), Some("ci")),
+            argv(&["--title=pr ci"])
         );
     }
 

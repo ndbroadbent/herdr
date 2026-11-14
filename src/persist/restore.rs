@@ -26,6 +26,8 @@ use super::{
 struct AgentRestoreState<'a> {
     enabled: bool,
     resumed_sessions: &'a mut HashSet<String>,
+    /// The custom name of the tab being restored, for `{tab}` in the resume arguments.
+    tab_label: Option<&'a str>,
 }
 
 struct PaneRestoreStartup<'a> {
@@ -555,6 +557,7 @@ fn restore_tab(
             let mut agent_restore = AgentRestoreState {
                 enabled: runtime_context.resume_agents_on_restore,
                 resumed_sessions: resumed_agent_sessions,
+                tab_label: snap.custom_name.as_deref(),
             };
             pane_restore_startup(
                 saved_agent_session,
@@ -839,7 +842,8 @@ fn pane_restore_startup<'a>(
     } else if let Some(resume) = reported_resume {
         Some(reported_resume_from_snapshot(resume).plan(cwd))
     } else {
-        session.and_then(|session| restore_plan_for_snapshot(session, true))
+        session
+            .and_then(|session| restore_plan_for_snapshot(session, true, agent_restore.tab_label))
     };
     let has_native_agent_restore = restore_plan.is_some();
     // Reserve before spawning so later panes in the same restore pass cannot
@@ -894,12 +898,18 @@ fn reported_resume_from_snapshot(
 fn restore_plan_for_snapshot(
     session: &PaneAgentSessionSnapshot,
     resume_agents_on_restore: bool,
+    tab_label: Option<&str>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
     if !resume_agents_on_restore {
         return None;
     }
     let persisted = persisted_agent_session_from_snapshot(session)?;
-    crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)
+    crate::agent_resume::plan_in_tab(
+        &session.source,
+        &session.agent,
+        &persisted.session_ref,
+        tab_label,
+    )
 }
 
 fn persisted_agent_session_from_snapshot(
@@ -929,7 +939,7 @@ fn take_restore_plan_for_snapshot(
     resume_agents_on_restore: bool,
     resumed_agent_sessions: &mut HashSet<String>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
-    restore_plan_for_snapshot(session, resume_agents_on_restore)
+    restore_plan_for_snapshot(session, resume_agents_on_restore, None)
         .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
 }
 
@@ -1191,9 +1201,11 @@ mod tests {
             value: pi_session_path.clone(),
         };
 
-        assert!(restore_plan_for_snapshot(&session, false).is_none());
+        assert!(restore_plan_for_snapshot(&session, false, None).is_none());
         assert_eq!(
-            restore_plan_for_snapshot(&session, true).unwrap().argv,
+            restore_plan_for_snapshot(&session, true, None)
+                .unwrap()
+                .argv,
             vec!["pi", "--session", pi_session_path.as_str()]
         );
 
@@ -1203,7 +1215,7 @@ mod tests {
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("claude-session"),
         };
-        assert!(restore_plan_for_snapshot(&unsupported_path, true).is_none());
+        assert!(restore_plan_for_snapshot(&unsupported_path, true, None).is_none());
     }
 
     #[test]
@@ -1245,6 +1257,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: true,
             resumed_sessions: &mut resumed,
+            tab_label: None,
         };
 
         let startup = pane_restore_startup(
@@ -1276,6 +1289,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: true,
             resumed_sessions: &mut resumed,
+            tab_label: None,
         };
 
         let first = pane_restore_startup(
@@ -1326,6 +1340,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: true,
             resumed_sessions: &mut resumed,
+            tab_label: None,
         };
 
         let project_a = std::path::Path::new("/project-a");
@@ -1361,6 +1376,7 @@ mod tests {
         let mut disabled = AgentRestoreState {
             enabled: false,
             resumed_sessions: &mut resumed,
+            tab_label: None,
         };
         let startup = pane_restore_startup(
             None,
@@ -1389,6 +1405,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: false,
             resumed_sessions: &mut resumed,
+            tab_label: None,
         };
 
         let startup = pane_restore_startup(
