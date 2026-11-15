@@ -218,6 +218,10 @@ class FinishedPrTests(unittest.TestCase):
         self.assertEqual(self.closed(hours=23)["stage"], "closed")
         self.assertEqual(self.closed(hours=25), {})
 
+    def test_a_pr_outside_docspring_names_its_repo(self):
+        pull = {"number": 2553, "url": url(2553, repo="convox/rack"), "state": "OPEN", "headRefOid": "abc"}
+        self.assertEqual(watch.desired_tokens(pull, None, True, {}, {"pipelines": {}})["pr"], "rack: #2553")
+
     def test_hiding_a_merged_pr_clears_what_it_left_in_the_sidebar(self):
         pane = agent(pr="#2", pr_url=url(2), stage="merged")
         with mock.patch.object(watch, "report_tokens") as report:

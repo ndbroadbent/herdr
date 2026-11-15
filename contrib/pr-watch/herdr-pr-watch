@@ -4,7 +4,7 @@
 Run once per interval (see the launchd plist next to this file). For every Claude session in the
 running herdr server it works out the session's PR, then writes these pane metadata tokens:
 
-    pr, pr_url        "#1281" and its GitHub link
+    pr, pr_url        "#1281" and its GitHub link; another repo's PR shows as "rack: #2553"
     ci_status         a Nerd Font check, x or dot (running)
     ci_url            its CircleCI pipeline link
     stage             where the PR is in the deploy queue, or "merged"/"closed"
@@ -474,6 +474,14 @@ def age_secs(timestamp):
     return time.time() - epoch(timestamp) if timestamp else 0
 
 
+def pr_label(pull):
+    """"#1281", or "rack: #2553" for a PR outside the default repo."""
+    match = PR_URL.search(pull.get("url") or "")
+    if match and match.group(1).lower() != DEFAULT_REPO.lower():
+        return f"{match.group(1).split('/')[1]}: #{pull['number']}"
+    return f"#{pull['number']}"
+
+
 def desired_tokens(pull, queue_entry, queue_known, current, state):
     """The owned tokens this PR should have. Missing keys are cleared."""
     if pull["state"] != "OPEN":
@@ -482,12 +490,12 @@ def desired_tokens(pull, queue_entry, queue_known, current, state):
         if age_secs(merged_at or pull.get("closedAt")) > hide_after:
             return {}
         return {
-            "pr": f"#{pull['number']}",
+            "pr": pr_label(pull),
             "pr_url": pull["url"],
             "stage": "merged" if merged_at else "closed",
         }
 
-    tokens = {"pr": f"#{pull['number']}", "pr_url": pull["url"]}
+    tokens = {"pr": pr_label(pull), "pr_url": pull["url"]}
     pipeline = pipeline_for(pull, state)
     if pipeline:
         number, slug = pipeline
