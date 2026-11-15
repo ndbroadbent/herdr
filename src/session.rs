@@ -11,7 +11,8 @@ pub const SESSION_ENV_VAR: &str = "HERDR_SESSION";
 pub const DEFAULT_SESSION_NAME: &str = "default";
 
 const MAX_SESSION_NAME_LEN: usize = 64;
-const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+// A server running dozens of agents takes well over a minute to close them all.
+const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(180);
 const STOP_WAIT_POLL: Duration = Duration::from_millis(25);
 const MIN_SOCKET_TIMEOUT: Duration = Duration::from_millis(1);
 
@@ -598,7 +599,7 @@ mod tests {
 
     #[test]
     fn stop_wait_timeout_allows_slow_graceful_shutdown() {
-        assert_eq!(STOP_WAIT_TIMEOUT, Duration::from_secs(15));
+        assert_eq!(STOP_WAIT_TIMEOUT, Duration::from_secs(180));
     }
 
     #[test]
