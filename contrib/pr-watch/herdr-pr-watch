@@ -4,7 +4,8 @@
 Run once per interval (see the launchd plist next to this file). For every Claude session in the
 running herdr server it works out the session's PR, then writes these pane metadata tokens:
 
-    pr, pr_url        "#1281" and its GitHub link; another repo's PR shows as "rack: #2553"
+    pr, pr_url        "#1281" and its GitHub link; another repo's PR shows as "rack: #2553",
+                      its name cut to 10 characters and "..."
     ci_status         a Nerd Font check, x or dot (running)
     ci_url            its CircleCI pipeline link
     stage             where the PR is in the deploy queue, or "merged"/"closed"
@@ -69,6 +70,8 @@ CLAIM_WARN_AFTER_SECS = 120
 HIDE_MERGED_AFTER_SECS = 15 * 60
 HIDE_CLOSED_AFTER_SECS = 24 * 60 * 60
 MAX_TOKEN_VALUE_LEN = 80
+# Longer repo names in the pr token are cut to this many characters and "...".
+REPO_NAME_MAX_LEN = 10
 
 PR_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 PR_REF = re.compile(r"^(?:([\w.-]+/[\w.-]+)#)?#?(\d+)$")
@@ -478,7 +481,10 @@ def pr_label(pull):
     """"#1281", or "rack: #2553" for a PR outside the default repo."""
     match = PR_URL.search(pull.get("url") or "")
     if match and match.group(1).lower() != DEFAULT_REPO.lower():
-        return f"{match.group(1).split('/')[1]}: #{pull['number']}"
+        name = match.group(1).split("/")[1]
+        if len(name) > REPO_NAME_MAX_LEN:
+            name = name[:REPO_NAME_MAX_LEN] + "..."
+        return f"{name}: #{pull['number']}"
     return f"#{pull['number']}"
 
 

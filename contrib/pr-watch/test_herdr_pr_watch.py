@@ -221,6 +221,8 @@ class FinishedPrTests(unittest.TestCase):
     def test_a_pr_outside_docspring_names_its_repo(self):
         pull = {"number": 2553, "url": url(2553, repo="convox/rack"), "state": "OPEN", "headRefOid": "abc"}
         self.assertEqual(watch.desired_tokens(pull, None, True, {}, {"pipelines": {}})["pr"], "rack: #2553")
+        pull = {"number": 1, "url": url(1, repo="DocSpring/pipedream_integration"), "state": "OPEN", "headRefOid": "abc"}
+        self.assertEqual(watch.desired_tokens(pull, None, True, {}, {"pipelines": {}})["pr"], "pipedream_...: #1")
 
     def test_hiding_a_merged_pr_clears_what_it_left_in_the_sidebar(self):
         pane = agent(pr="#2", pr_url=url(2), stage="merged")
