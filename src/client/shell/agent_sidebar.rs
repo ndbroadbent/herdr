@@ -348,11 +348,10 @@ fn agent_age(agent: &crate::protocol::ClientShellAgent, config: &ClientShellConf
     let Some(changed_at) = agent.state_changed_at_unix_ms else {
         return AgentAge::default();
     };
-    // A grey dot means nothing to come back to, so its age would only be noise.
-    let grey = agent.agent_status == crate::api::schema::AgentStatus::Unknown
-        || (agent.agent_status == crate::api::schema::AgentStatus::Idle
-            && super::attention::is_marked_inactive(agent));
-    let shows_label = config.agents.shows_changed() && !grey;
+    // An unknown state has no meaningful change time. A session marked inactive keeps its age,
+    // which shows how long it has been left alone.
+    let unknown = agent.agent_status == crate::api::schema::AgentStatus::Unknown;
+    let shows_label = config.agents.shows_changed() && !unknown;
     let tracks_recent = config.agents.recent_done_color.is_some()
         && agent.agent_status == crate::api::schema::AgentStatus::Done;
     if !shows_label && !tracks_recent {

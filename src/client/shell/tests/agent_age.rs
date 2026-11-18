@@ -138,22 +138,23 @@ fn entries_show_how_long_ago_their_state_changed_and_a_fresh_done_dot_is_pink() 
 }
 
 #[test]
-fn grey_dots_show_no_time() {
+fn an_inactive_session_keeps_its_time_and_an_unknown_state_shows_none() {
+    let hour = 60 * 60_000;
     let (state, frame) = shell(
         &config(true),
         vec![
             agent(
                 1,
                 AgentStatus::Idle,
-                Some(10_000),
+                Some(2 * hour),
                 &[(MARK_INACTIVE_TOKEN, MARK_SET_VALUE)],
             ),
             agent(2, AgentStatus::Unknown, Some(10_000), &[]),
         ],
     );
-    assert!(entry(&state, &frame, 1).0.ends_with("tab1"));
+    let (inactive, _) = entry(&state, &frame, 1);
+    assert!(inactive.ends_with("tab1 2h"), "{inactive}");
     assert!(entry(&state, &frame, 2).0.ends_with("tab2"));
-    assert_eq!(state.hits.agent_age_repaint_at_unix_ms, None);
 }
 
 #[test]
