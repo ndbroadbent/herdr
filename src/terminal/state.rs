@@ -121,6 +121,15 @@ struct RecentAgentProcessExit {
     observed_at: Instant,
 }
 
+/// What an idle compaction must not change: see [`TerminalState::before_working_spell`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BeforeWorkingSpell {
+    pub state_changed_at_unix_ms: Option<u64>,
+    pub completion_seq: Option<u64>,
+    pub seen: bool,
+    pub marked_inactive: bool,
+}
+
 /// Pure state for a server-owned terminal.
 ///
 /// During the migration this is still one-to-one with a pane-backed PTY, but
@@ -159,6 +168,13 @@ pub struct TerminalState {
     /// The time above came from the last session and the agent hasn't settled since it was
     /// restored, so its start-up state changes shouldn't replace it.
     keeping_restored_state_change_time: bool,
+    /// The screen's last entry says the agent compacted its conversation by itself while it sat
+    /// idle (Claude's "Compacted while idle"), so the working spell that ends there wasn't the
+    /// agent doing anything for the person.
+    pub idle_compaction_visible: bool,
+    /// How the session looked before its latest working spell began, so a spell that turns out
+    /// to be an idle compaction can leave the session as it was.
+    pub before_working_spell: Option<BeforeWorkingSpell>,
     pub last_agent_completion_seq: Option<u64>,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
@@ -201,6 +217,8 @@ impl TerminalState {
             last_agent_state_change_seq: None,
             last_agent_state_change_unix_ms: None,
             keeping_restored_state_change_time: false,
+            idle_compaction_visible: false,
+            before_working_spell: None,
             last_agent_completion_seq: None,
             revision: 0,
             launch_argv: None,

@@ -360,6 +360,37 @@ pub(super) fn detection_update_for_publish_with_osc(
     (!detection.skip_state_update).then_some(detection)
 }
 
+/// The notices Claude Code appends after compacting a conversation by itself while it sat idle.
+const CLAUDE_IDLE_COMPACTION_NOTICES: [&str; 2] = [
+    "⏺ Compacted while idle, before the prompt cache expired",
+    "⏺ Compacted using a summary written while you were away",
+];
+
+/// Whether the last entry above Claude's prompt box is its idle compaction notice. Entries start
+/// in the first column; their wrapped lines, blank lines and right-aligned notices don't.
+pub(super) fn claude_idle_compaction_visible(content: &str) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut rules = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, line)| line.trim_start().starts_with("──"))
+        .map(|(index, _)| index);
+    // The prompt box is drawn between two rules; the transcript ends above the upper one.
+    let (Some(_bottom), Some(top)) = (rules.next(), rules.next()) else {
+        return false;
+    };
+    lines[..top]
+        .iter()
+        .rev()
+        .find(|line| line.chars().next().is_some_and(|ch| !ch.is_whitespace()))
+        .is_some_and(|entry| {
+            CLAUDE_IDLE_COMPACTION_NOTICES
+                .iter()
+                .any(|notice| entry.starts_with(notice))
+        })
+}
+
 pub(super) fn codex_prompt_ready(content: &str) -> bool {
     // The composer can remain visible during a turn; this is startup evidence only.
     let recent: String = content
@@ -390,6 +421,27 @@ pub(super) fn mark_detection_content_changed(detection_content_seq: &AtomicU64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_idle_compaction_counts_only_while_it_is_the_last_entry() {
+        let screen = |transcript: &str| {
+            format!(
+                "{transcript}\n\n                    ✔ Update installed\n──── tasks ─\n❯ \n────\n  ⏵⏵ bypass permissions on\n"
+            )
+        };
+        let notice = "⏺ Compacted while idle, before the prompt cache expired · turn off with\n  \"idleCompaction\": false in settings.json";
+        assert!(claude_idle_compaction_visible(&screen(&format!(
+            "⏺ Done.\n\n{notice}"
+        ))));
+        assert!(claude_idle_compaction_visible(&screen(
+            "⏺ Compacted using a summary written while you were away"
+        )));
+        assert!(!claude_idle_compaction_visible(&screen(&format!(
+            "{notice}\n\n❯ what next?\n\n⏺ Next, the tests."
+        ))));
+        assert!(!claude_idle_compaction_visible(&screen("⏺ Done.")));
+        assert!(!claude_idle_compaction_visible(notice), "no prompt box");
+    }
 
     #[test]
     fn unidentified_text_cache_preserves_text_changes_and_forced_reads() {

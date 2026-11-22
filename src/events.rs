@@ -91,6 +91,9 @@ pub enum AppEvent {
     },
     /// The current Codex input screen is visible during managed startup.
     CodexPromptObserved { pane_id: PaneId, ready: bool },
+    /// Whether the screen's last entry says the agent compacted its conversation by itself while
+    /// it sat idle.
+    IdleCompactionObserved { pane_id: PaneId, visible: bool },
     /// Fallback detector state changed in a pane.
     StateChanged {
         pane_id: PaneId,

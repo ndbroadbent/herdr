@@ -1,6 +1,7 @@
 //! Pure state mutations on AppState.
 //! These don't need channels, async, or PTY runtime.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use tracing::warn;
@@ -22,6 +23,36 @@ use super::state::{
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
     matches!(new_state, AgentState::Idle)
         && matches!(prev_state, AgentState::Working | AgentState::Blocked)
+}
+
+/// Remembers how the session looked when a working spell begins, and when one ends on an idle
+/// compaction, returns that so the spell leaves no trace: the agent did nothing for anyone.
+fn settle_working_spell(
+    terminal: &mut crate::terminal::TerminalState,
+    change: &EffectiveStateChange,
+    previous_seen: bool,
+) -> Option<crate::terminal::BeforeWorkingSpell> {
+    match (change.previous_state, change.state) {
+        (AgentState::Idle, AgentState::Working) => {
+            terminal.before_working_spell = Some(crate::terminal::BeforeWorkingSpell {
+                state_changed_at_unix_ms: terminal.last_agent_state_change_unix_ms,
+                completion_seq: terminal.last_agent_completion_seq,
+                seen: previous_seen,
+                marked_inactive: terminal
+                    .metadata_tokens
+                    .contains(crate::metadata_tokens::MARK_INACTIVE_TOKEN),
+            });
+            None
+        }
+        (AgentState::Working, AgentState::Idle) => terminal
+            .before_working_spell
+            .take()
+            .filter(|_| terminal.idle_compaction_visible),
+        _ => {
+            terminal.before_working_spell = None;
+            None
+        }
+    }
 }
 
 fn is_completion_transition(change: &EffectiveStateChange) -> bool {
@@ -1512,6 +1543,13 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            AppEvent::IdleCompactionObserved { pane_id, visible } => {
+                self.update_terminal_state(pane_id, |terminal| {
+                    terminal.idle_compaction_visible = visible;
+                    None
+                });
+                Vec::new()
+            }
             AppEvent::CodexPromptObserved { pane_id, ready } => self
                 .update_terminal_state(pane_id, |terminal| {
                     terminal.observe_codex_prompt_ready(ready)
@@ -1802,25 +1840,44 @@ impl AppState {
         }
         let agent_released = mutation.agent_released;
         let change = mutation.effective_state_change.or(unchanged_change)?;
+        let idle_compaction = (change.previous_state != change.state)
+            .then(|| self.terminals.get_mut(&terminal_id))
+            .flatten()
+            .and_then(|terminal| settle_working_spell(terminal, &change, previous_seen));
         let suppress_completion = force_suppress_completion
+            || idle_compaction.is_some()
             || (change.state == AgentState::Idle && suppress_acquisition_completion);
         if change.previous_state != change.state {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
-                let now_unix_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |elapsed| elapsed.as_millis() as u64);
-                if terminal.record_agent_state_change_time(change.state, now_unix_ms) {
-                    // Saved so a restart keeps each agent's age.
-                    self.session_dirty = true;
+                if let Some(before) = idle_compaction {
+                    // An idle compaction leaves the session as it was before it began.
+                    if terminal.last_agent_state_change_unix_ms != before.state_changed_at_unix_ms {
+                        terminal.last_agent_state_change_unix_ms = before.state_changed_at_unix_ms;
+                        self.session_dirty = true;
+                    }
+                    terminal.last_agent_completion_seq = before.completion_seq;
+                } else {
+                    let now_unix_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+                    if terminal.record_agent_state_change_time(change.state, now_unix_ms) {
+                        // Saved so a restart keeps each agent's age.
+                        self.session_dirty = true;
+                    }
+                    terminal.last_agent_completion_seq = (!suppress_completion
+                        && is_completion_transition(&change))
+                    .then_some(self.next_agent_state_change_seq);
                 }
-                terminal.last_agent_completion_seq = (!suppress_completion
-                    && is_completion_transition(&change))
-                .then_some(self.next_agent_state_change_seq);
             }
         }
-        let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, suppress_completion)?;
+        let mut seen =
+            self.apply_pane_state_change(ws_idx, pane_id, &change, suppress_completion)?;
+        if let Some(before) = idle_compaction {
+            self.restore_after_idle_compaction(ws_idx, pane_id, &terminal_id, before);
+            seen = before.seen;
+        }
         let update = PaneStateUpdate {
             pane_id,
             ws_idx,
@@ -1848,6 +1905,36 @@ impl AppState {
             suppress_completion,
         };
         Some(update)
+    }
+
+    /// Puts back the seen state and the inactive mark that the idle compaction's working spell
+    /// took away.
+    fn restore_after_idle_compaction(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        terminal_id: &crate::terminal::TerminalId,
+        before: crate::terminal::BeforeWorkingSpell,
+    ) {
+        if let Some(pane) = self.workspaces[ws_idx].pane_state_mut(pane_id) {
+            if pane.seen != before.seen {
+                pane.seen = before.seen;
+                self.mark_session_dirty();
+            }
+        }
+        if !before.marked_inactive {
+            return;
+        }
+        if let Some(terminal) = self.terminals.get_mut(terminal_id) {
+            let mark = HashMap::from([(
+                crate::metadata_tokens::MARK_INACTIVE_TOKEN.to_string(),
+                Some(crate::metadata_tokens::MARK_SET_VALUE.to_string()),
+            )]);
+            if terminal.metadata_tokens.patch(mark, None, Instant::now()) {
+                terminal.revision = terminal.revision.saturating_add(1);
+                self.mark_session_dirty();
+            }
+        }
     }
 
     pub(crate) fn next_managed_agent_deadline(&self) -> Option<Instant> {
@@ -4956,6 +5043,58 @@ mod tests {
         state.switch_workspace(1);
         assert!(state.workspaces[1].panes.get(&pane).unwrap().seen);
         assert!(!has_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN));
+    }
+
+    #[test]
+    fn an_idle_compaction_leaves_the_session_as_it_was() {
+        use crate::metadata_tokens::MARK_INACTIVE_TOKEN;
+        for inactive in [false, true] {
+            let mut state = app_with_workspaces(&["active", "background"]);
+            state.outer_terminal_focus = Some(true);
+            state.active = Some(0);
+            let pane = *state.workspaces[1].panes.keys().next().unwrap();
+            set_terminal_state(&mut state, 1, pane, AgentState::Idle);
+            if inactive {
+                set_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN);
+            }
+            let terminal_id = state.workspaces[1]
+                .pane_state(pane)
+                .unwrap()
+                .attached_terminal_id
+                .clone();
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .last_agent_state_change_unix_ms = Some(1_000);
+
+            report_state(&mut state, pane, AgentState::Working);
+            state.handle_app_event(AppEvent::IdleCompactionObserved {
+                pane_id: pane,
+                visible: true,
+            });
+            report_state(&mut state, pane, AgentState::Idle);
+
+            let terminal = &state.terminals[&terminal_id];
+            assert_eq!(terminal.last_agent_state_change_unix_ms, Some(1_000));
+            assert_eq!(terminal.last_agent_completion_seq, None, "no blue dot");
+            assert!(state.workspaces[1].panes.get(&pane).unwrap().seen);
+            assert_eq!(
+                has_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN),
+                inactive,
+                "the inactive mark comes back"
+            );
+
+            // The next spell is real work again.
+            state.handle_app_event(AppEvent::IdleCompactionObserved {
+                pane_id: pane,
+                visible: false,
+            });
+            report_state(&mut state, pane, AgentState::Working);
+            report_state(&mut state, pane, AgentState::Idle);
+            assert!(!state.workspaces[1].panes.get(&pane).unwrap().seen);
+            assert!(!has_mark(&mut state, 1, pane, MARK_INACTIVE_TOKEN));
+        }
     }
 
     #[test]

@@ -35,11 +35,12 @@ mod terminal;
 mod xtgettcap;
 
 use self::agent_detection::{
-    codex_prompt_ready, decide_detection_screen_read, decide_screen_detection_publish,
-    detection_update_for_publish_with_osc, mark_detection_content_changed,
-    observe_detection_content_change, DetectionPublishDecision, DetectionScreenReadDecision,
-    DetectionScreenReadInput, DetectionTextCache, PendingIdleConfirmation,
-    ScreenDetectionPublishInput, AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW,
+    claude_idle_compaction_visible, codex_prompt_ready, decide_detection_screen_read,
+    decide_screen_detection_publish, detection_update_for_publish_with_osc,
+    mark_detection_content_changed, observe_detection_content_change, DetectionPublishDecision,
+    DetectionScreenReadDecision, DetectionScreenReadInput, DetectionTextCache,
+    PendingIdleConfirmation, ScreenDetectionPublishInput, AGENT_PENDING_IDLE_RECHECK,
+    AGENT_STARTUP_GRACE_WINDOW,
 };
 use self::background_agent::{AgentJobStatus, AgentJobTracker};
 #[cfg(test)]
@@ -330,6 +331,27 @@ async fn publish_codex_prompt_observation(
         .await
     {
         warn!(pane = pane_id.raw(), %err, "failed to deliver Codex prompt observation");
+    }
+}
+
+async fn publish_idle_compaction_observation(
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Option<Agent>,
+    content: &str,
+    last_visible: &mut bool,
+) {
+    let visible = agent == Some(Agent::Claude) && claude_idle_compaction_visible(content);
+    if visible == *last_visible {
+        return;
+    }
+    *last_visible = visible;
+    // Sent before this screen's state change, so the app knows why the agent went idle.
+    if let Err(err) = state_events
+        .send(AppEvent::IdleCompactionObserved { pane_id, visible })
+        .await
+    {
+        warn!(pane = pane_id.raw(), %err, "failed to deliver idle compaction observation");
     }
 }
 
@@ -965,6 +987,7 @@ fn spawn_basic_detection_task(
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut last_codex_prompt_ready = false;
+        let mut last_idle_compaction_visible = false;
         let mut last_self_reported_shell_check = None;
         let mut agent_job = AgentJobTracker::default();
 
@@ -1193,6 +1216,14 @@ fn spawn_basic_detection_task(
                 screen_detection.as_ref(),
                 process_exited,
                 &mut last_codex_prompt_ready,
+            )
+            .await;
+            publish_idle_compaction_observation(
+                &state_events,
+                pane_id,
+                agent,
+                content,
+                &mut last_idle_compaction_visible,
             )
             .await;
             let Some(screen_detection) = screen_detection else {
@@ -2890,6 +2921,7 @@ impl PaneRuntime {
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut last_codex_prompt_ready = false;
+                let mut last_idle_compaction_visible = false;
                 let mut last_self_reported_shell_check = None;
                 let mut agent_job = AgentJobTracker::default();
 
@@ -3201,6 +3233,14 @@ impl PaneRuntime {
                         screen_detection.as_ref(),
                         process_exited,
                         &mut last_codex_prompt_ready,
+                    )
+                    .await;
+                    publish_idle_compaction_observation(
+                        &state_events,
+                        pane_id,
+                        agent,
+                        content,
+                        &mut last_idle_compaction_visible,
                     )
                     .await;
                     let Some(screen_detection) = screen_detection else {
