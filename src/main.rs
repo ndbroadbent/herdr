@@ -624,6 +624,7 @@ fn main() -> io::Result<()> {
         println!("       herdr update [--handoff]");
         println!("       herdr channel set <stable|preview>");
         println!("       herdr machine <subcommand> ...");
+        println!("       herdr restart [--fresh]");
         println!("       herdr server stop");
         println!("       herdr server reload-config");
         println!("       herdr api <subcommand> ...");
@@ -646,8 +647,12 @@ fn main() -> io::Result<()> {
                 "herdr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("herdr update", "Download and install the latest version"),
+            ("herdr update", "Disabled in this fork; use herdr restart"),
             ("herdr completion zsh", "Generate shell completions for zsh"),
+            (
+                "herdr restart [--fresh]",
+                "Restart the server from this binary, keeping every pane running",
+            ),
             (
                 "herdr server stop",
                 "Stop the running server via the API socket",

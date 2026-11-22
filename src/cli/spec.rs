@@ -36,6 +36,7 @@ pub(super) fn command() -> Command {
         .subcommand(channel_command())
         .subcommand(machine::command())
         .subcommand(server_command())
+        .subcommand(restart_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
         .subcommand(worktree_command())
@@ -117,6 +118,12 @@ fn update_command() -> Command {
     Command::new("update")
         .about("Download and install the latest version")
         .arg(flag("handoff").help("Try live handoff after installing"))
+}
+
+fn restart_command() -> Command {
+    Command::new("restart")
+        .about("Restart the server from this binary, keeping every pane running")
+        .arg(flag("fresh").help("Stop the server and every pane, then start a new server"))
 }
 
 fn status_command() -> Command {

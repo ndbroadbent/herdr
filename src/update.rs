@@ -2105,8 +2105,19 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// This fork is built and installed from its own source tree. An upstream release would
+/// replace it, so `herdr update` (and `herdr channel set`, which calls it) stops here.
+const FORK_SELF_UPDATE_DISABLED: &str = "self-update is disabled in this fork: it would replace \
+    it with the upstream herdr release. Build and install from ~/code/herdr, then run \
+    `herdr restart`.";
+
+fn fork_self_update_guard() -> Result<(), String> {
+    Err(FORK_SELF_UPDATE_DISABLED.to_string())
+}
+
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    fork_self_update_guard()?;
     let channel = UpdateChannel::configured();
 
     if is_homebrew_managed_install() {
@@ -2989,6 +3000,15 @@ mod tests {
         assert!(body.contains(FAKE_UPDATE_VERSION_ENV));
 
         std::env::remove_var(FAKE_UPDATE_NOTES_VERSION_ENV);
+    }
+
+    #[test]
+    fn self_update_is_disabled_in_this_fork() {
+        let err = self_update(SelfUpdateOptions { live_handoff: true }).unwrap_err();
+
+        // main.rs prints errors with this prefix as they are, without "update failed".
+        assert!(err.starts_with("self-update is disabled"));
+        assert!(err.contains("herdr restart"));
     }
 
     #[test]

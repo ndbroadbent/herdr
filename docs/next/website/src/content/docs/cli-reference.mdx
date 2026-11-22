@@ -122,12 +122,16 @@ compinit
 
 ```bash
 herdr server
+herdr restart
+herdr restart --fresh
 herdr server stop
 herdr server reload-config
 herdr server agent-manifests [--json]
 herdr server update-agent-manifests [--json]
 herdr server reload-agent-manifests
 ```
+
+`herdr restart` replaces the running server with the `herdr` binary that runs the command, so a build you just installed takes over. Every pane is handed to the new server and keeps running: agents aren't stopped or resumed. Open clients disconnect; run `herdr` to reattach. If the handoff fails, the old server keeps running with your panes. `herdr restart --fresh` stops the server and every pane, then starts a new server. It refuses to run from a pane of the server it would stop, since stopping that server would end the command before it could start the new one. Add `--session <name>` to restart a named session.
 
 `herdr server` runs the headless server explicitly. Use it for supervised or service-style setups. `reload-config` applies reloadable settings without restarting panes. `agent-manifests` shows the active agent detection manifest sources, cached remote versions, and last remote update results. `update-agent-manifests` fetches remote manifest updates immediately, reloads them into the running server, and prints the updated manifest status; pass `--json` for the raw status response. `reload-agent-manifests` reloads agent detection manifests into the running server after local override edits.
 

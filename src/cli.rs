@@ -31,6 +31,7 @@ mod notification;
 mod pane;
 mod plugin;
 mod protocol_guard;
+mod restart;
 mod runtime;
 mod server;
 mod server_not_running;
@@ -114,6 +115,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
             };
             exit_code
         }
+        "restart" => restart::run_restart_command(&args[2..])?,
         "api" => api::run_api_command(&args[2..])?,
         "status" => status::run_status_command(&args[2..])?,
         "completion" | "completions" => completion::run_completion_command(&args[2..])?,
