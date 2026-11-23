@@ -210,6 +210,9 @@ pub struct AgentInfo {
     pub agent_session: Option<AgentSessionInfo>,
     pub workspace_id: String,
     pub tab_id: String,
+    /// The label of the agent's tab, as `tab list` shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_label: Option<String>,
     pub pane_id: String,
     pub focused: bool,
     #[serde(default, skip_serializing_if = "super::is_false")]

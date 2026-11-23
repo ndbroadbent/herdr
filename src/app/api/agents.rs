@@ -949,4 +949,38 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn agent_and_pane_records_carry_the_tab_label() {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Pi), AgentState::Idle);
+
+        let tab_label = |app: &mut App| {
+            let response: SuccessResponse =
+                serde_json::from_str(&app.handle_agent_list("req".into())).unwrap();
+            let ResponseResult::AgentList { agents } = response.result else {
+                panic!("expected an agent list");
+            };
+            let pane = app.pane_metadata(0, pane_id).unwrap();
+            assert_eq!(pane.tab_label, agents[0].tab_label);
+            agents[0].tab_label.clone()
+        };
+
+        // An unnamed tab shows its number, as `tab list` does.
+        assert_eq!(tab_label(&mut app).as_deref(), Some("1"));
+        app.state.workspaces[0].tabs[0].custom_name = Some("email triage".into());
+        assert_eq!(tab_label(&mut app).as_deref(), Some("email triage"));
+        assert_eq!(
+            app.pane_tab_ref(0, pane_id),
+            (app.public_tab_id(0, 0), Some("email triage".into()))
+        );
+    }
 }

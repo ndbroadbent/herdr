@@ -686,11 +686,30 @@ impl App {
         });
     }
 
+    /// The public ID and label of the tab holding a pane.
+    pub(crate) fn pane_tab_ref(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+    ) -> (Option<String>, Option<String>) {
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return (None, None);
+        };
+        let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) else {
+            return (None, None);
+        };
+        (
+            self.public_tab_id(ws_idx, tab_idx),
+            ws.tab_display_name(tab_idx),
+        )
+    }
+
     pub(crate) fn emit_pane_state_update(&mut self, update: &crate::app::actions::PaneStateUpdate) {
         let Some(pane_id) = self.public_pane_id(update.ws_idx, update.pane_id) else {
             return;
         };
         let workspace_id = self.public_workspace_id(update.ws_idx);
+        let (tab_id, tab_label) = self.pane_tab_ref(update.ws_idx, update.pane_id);
 
         if update.agent_name_changed {
             self.emit_pane_updated(update.ws_idx, update.pane_id);
@@ -702,6 +721,8 @@ impl App {
                 data: crate::api::schema::EventData::PaneAgentDetected {
                     pane_id: pane_id.clone(),
                     workspace_id: workspace_id.clone(),
+                    tab_id: tab_id.clone(),
+                    tab_label: tab_label.clone(),
                     agent: update.agent_label.clone(),
                     released: update.agent_released,
                     final_status: update.agent_release_status,
@@ -727,6 +748,8 @@ impl App {
                 data: crate::api::schema::EventData::PaneAgentStatusChanged {
                     pane_id,
                     workspace_id,
+                    tab_id,
+                    tab_label,
                     agent_status,
                     agent: update.agent_label.clone(),
                     title: presentation.title,

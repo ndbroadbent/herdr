@@ -399,6 +399,10 @@ pub struct PaneOutputMatchedEvent {
 pub struct PaneAgentStatusChangedEvent {
     pub pane_id: String,
     pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_label: Option<String>,
     pub agent_status: AgentStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
@@ -531,6 +535,10 @@ pub enum EventData {
         pane_id: String,
         workspace_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         released: bool,
@@ -540,6 +548,10 @@ pub enum EventData {
     PaneAgentStatusChanged {
         pane_id: String,
         workspace_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_label: Option<String>,
         agent_status: AgentStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<String>,

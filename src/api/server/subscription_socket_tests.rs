@@ -221,6 +221,7 @@ fn reply_to_probe(request: ApiRequestMessage) {
                 terminal_id: "term_1".into(),
                 workspace_id: "workspace_1".into(),
                 tab_id: "tab_1".into(),
+                tab_label: None,
                 focused: true,
                 cwd: None,
                 foreground_cwd: None,

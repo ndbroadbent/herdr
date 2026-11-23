@@ -451,6 +451,9 @@ pub struct PaneInfo {
     pub terminal_id: String,
     pub workspace_id: String,
     pub tab_id: String,
+    /// The label of the pane's tab, as `tab list` shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_label: Option<String>,
     pub focused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,

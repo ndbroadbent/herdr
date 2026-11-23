@@ -215,6 +215,8 @@ impl ActiveSubscription {
                     .is_some_and(|wanted| wanted == probe.agent_status)
                     .then_some(PaneAgentStatusChangedEvent {
                         pane_id: probe.pane_id.clone(),
+                        tab_id: Some(probe.tab_id.clone()),
+                        tab_label: probe.tab_label.clone(),
                         workspace_id: probe.workspace_id,
                         agent_status: probe.agent_status,
                         agent: probe.agent,
@@ -428,6 +430,8 @@ impl ActiveAgentStatusChangedSubscription {
         let crate::api::schema::EventData::PaneAgentStatusChanged {
             pane_id,
             workspace_id,
+            tab_id,
+            tab_label,
             agent_status,
             agent,
             title,
@@ -459,6 +463,8 @@ impl ActiveAgentStatusChangedSubscription {
             data: SubscriptionEventData::PaneAgentStatusChanged(PaneAgentStatusChangedEvent {
                 pane_id,
                 workspace_id,
+                tab_id,
+                tab_label,
                 agent_status,
                 agent,
                 title,
@@ -528,6 +534,8 @@ impl ActiveAgentStatusChangedSubscription {
             data: SubscriptionEventData::PaneAgentStatusChanged(PaneAgentStatusChangedEvent {
                 pane_id: pane.pane_id,
                 workspace_id: pane.workspace_id,
+                tab_id: Some(pane.tab_id),
+                tab_label: pane.tab_label,
                 agent_status: current_status,
                 agent: pane.agent,
                 title: pane.title,
@@ -674,6 +682,8 @@ mod tests {
             data: EventData::PaneAgentStatusChanged {
                 pane_id: "pane_1".into(),
                 workspace_id: "workspace_1".into(),
+                tab_id: None,
+                tab_label: None,
                 agent_status: AgentStatus::Working,
                 agent: Some("pi".into()),
                 title: title.map(str::to_string),
@@ -698,6 +708,7 @@ mod tests {
             terminal_id: "terminal_1".into(),
             workspace_id: "workspace_1".into(),
             tab_id: "tab_1".into(),
+            tab_label: None,
             focused: true,
             cwd: None,
             foreground_cwd: None,
@@ -815,6 +826,8 @@ mod tests {
                     initial_event: Some(PaneAgentStatusChangedEvent {
                         pane_id: "pane_1".into(),
                         workspace_id: "workspace_1".into(),
+                        tab_id: None,
+                        tab_label: None,
                         agent_status: AgentStatus::Working,
                         agent: Some("pi".into()),
                         title: Some("stale initial snapshot".into()),
@@ -946,6 +959,8 @@ mod tests {
             initial_event: Some(PaneAgentStatusChangedEvent {
                 pane_id: "pane_1".into(),
                 workspace_id: "workspace_1".into(),
+                tab_id: None,
+                tab_label: None,
                 agent_status: AgentStatus::Working,
                 agent: Some("pi".into()),
                 title: None,
@@ -991,6 +1006,8 @@ mod tests {
             initial_event: Some(PaneAgentStatusChangedEvent {
                 pane_id: "pane_1".into(),
                 workspace_id: "workspace_1".into(),
+                tab_id: None,
+                tab_label: None,
                 agent_status: AgentStatus::Working,
                 agent: Some("pi".into()),
                 title: Some("short lived".into()),

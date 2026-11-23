@@ -394,6 +394,9 @@ impl App {
             agent_session: pane.agent_session,
             workspace_id: pane.workspace_id,
             tab_id: pane.tab_id,
+            tab_label: ws
+                .find_tab_index_for_pane(pane_id)
+                .and_then(|tab_idx| ws.tab_display_name(tab_idx)),
             pane_id: pane.pane_id,
             focused: pane.focused,
             launch_pending: terminal.managed_agent_launch_pending(),

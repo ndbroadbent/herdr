@@ -1243,6 +1243,7 @@ mod tests {
             terminal_id: "term_1".into(),
             workspace_id: "ws_1".into(),
             tab_id: "tab_1".into(),
+            tab_label: None,
             focused: true,
             cwd: None,
             foreground_cwd: None,

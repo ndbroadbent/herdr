@@ -645,6 +645,18 @@
                 "released": {
                   "type": "boolean"
                 },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "type": {
                   "const": "pane_agent_detected",
                   "type": "string"
@@ -685,6 +697,18 @@
                     "type": "string"
                   },
                   "type": "object"
+                },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "title": {
                   "type": [
@@ -837,6 +861,13 @@
             },
             "tab_id": {
               "type": "string"
+            },
+            "tab_label": {
+              "description": "The label of the pane's tab, as `tab list` shows it.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "terminal_id": {
               "type": "string"
@@ -6363,6 +6394,18 @@
               },
               "type": "object"
             },
+            "tab_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "title": {
               "type": [
                 "string",
@@ -6637,6 +6680,13 @@
             },
             "tab_id": {
               "type": "string"
+            },
+            "tab_label": {
+              "description": "The label of the agent's tab, as `tab list` shows it.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "terminal_id": {
               "type": "string"
@@ -7367,6 +7417,18 @@
                 "released": {
                   "type": "boolean"
                 },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "type": {
                   "const": "pane_agent_detected",
                   "type": "string"
@@ -7407,6 +7469,18 @@
                     "type": "string"
                   },
                   "type": "object"
+                },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "title": {
                   "type": [
@@ -7954,6 +8028,13 @@
             },
             "tab_id": {
               "type": "string"
+            },
+            "tab_label": {
+              "description": "The label of the pane's tab, as `tab list` shows it.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "terminal_id": {
               "type": "string"
