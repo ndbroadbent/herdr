@@ -1,7 +1,7 @@
 id = "codex"
-version = "2026.10.11.1"
+version = "2026.11.23.1"
 min_engine_version = 3
-updated_at = "2026-10-11T00:00:00Z"
+updated_at = "2026-11-23T00:00:00Z"
 
 [[rules]]
 id = "osc_title_blocked"
@@ -72,6 +72,19 @@ any = [
     { regex = ['(?m)^\s*Update\s+available\s+·'] },
     { regex = ['enter\s+continue\s+·\s+esc\s+skip\s*\z'] },
   ] },
+]
+
+[[rules]]
+id = "resume_directory"
+state = "blocked"
+priority = 950
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+# `codex resume` from a folder other than the session's own asks which working
+# directory to use. The window title is empty, so only the screen shows it.
+all = [
+  { regex = ['(?m)^\s*Working\s+directory\s+·\s+resume\s*$'] },
+  { regex = ['enter\s+continue\s+·\s+esc\s+use\s+session(?:\s+·[^\r\n]*)?\s*\z'] },
 ]
 
 [[rules]]
