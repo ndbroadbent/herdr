@@ -399,6 +399,7 @@ pub struct Keybinds {
     pub zoom: ActionKeybinds,
     pub mark_unread: ActionKeybinds,
     pub mark_inactive: ActionKeybinds,
+    pub mark_muted: ActionKeybinds,
     pub resize_mode: ActionKeybinds,
     pub resize_pane_left: ActionKeybinds,
     pub resize_pane_down: ActionKeybinds,
@@ -584,6 +585,7 @@ impl Config {
             zoom: empty_action!(),
             mark_unread: empty_action!(),
             mark_inactive: empty_action!(),
+            mark_muted: empty_action!(),
             resize_mode: empty_action!(),
             resize_pane_left: empty_action!(),
             resize_pane_down: empty_action!(),
@@ -734,6 +736,7 @@ impl Config {
             apply_action!(keybinds.zoom, zoom, source);
             apply_action!(keybinds.mark_unread, mark_unread, source);
             apply_action!(keybinds.mark_inactive, mark_inactive, source);
+            apply_action!(keybinds.mark_muted, mark_muted, source);
             apply_action!(keybinds.resize_mode, resize_mode, source);
             apply_action!(keybinds.resize_pane_left, resize_pane_left, source);
             apply_action!(keybinds.resize_pane_down, resize_pane_down, source);

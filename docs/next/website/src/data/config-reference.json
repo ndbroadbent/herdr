@@ -818,6 +818,12 @@
           "description": "Mark the focused session inactive until it next does something."
         },
         {
+          "key": "keys.mark_muted",
+          "type": "keybinding",
+          "default": "\"prefix+m\"",
+          "description": "Mute the focused session, or unmute it. A muted session never chimes or shows a notification, and shows only as working (yellow) or idle (green)."
+        },
+        {
           "key": "keys.resize_mode",
           "type": "keybinding",
           "default": "\"prefix+r\"",

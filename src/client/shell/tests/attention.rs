@@ -172,6 +172,23 @@ fn click_agent_menu_item(state: &mut ClientShellState, label: &str) -> ClientShe
 }
 
 #[test]
+fn mute_key_mutes_the_focused_session_and_a_second_press_unmutes_it() {
+    let mut unmuted = shell(&Config::default(), &[]);
+    assert_eq!(
+        reported_tokens(&press_binding(&mut unmuted, KeybindAction::ToggleMuted)),
+        HashMap::from([
+            (MARK_MUTED_TOKEN.to_string(), Some("1".to_string())),
+            (MARK_UNREAD_TOKEN.to_string(), None),
+        ])
+    );
+    let mut muted = shell(&Config::default(), &[(MARK_MUTED_TOKEN, "1")]);
+    assert_eq!(
+        reported_tokens(&press_binding(&mut muted, KeybindAction::ToggleMuted)),
+        HashMap::from([(MARK_MUTED_TOKEN.to_string(), None)])
+    );
+}
+
+#[test]
 fn muting_from_the_agent_menu_clears_unread_and_unmuting_clears_the_mark() {
     let mut unmuted = shell(&Config::default(), &[(MARK_UNREAD_TOKEN, "1")]);
     assert_eq!(

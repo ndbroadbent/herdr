@@ -176,6 +176,7 @@ pub(crate) fn keybind_help_groups(
                 entry(binding_label(&keybinds.zoom), "zoom pane"),
                 entry(binding_label(&keybinds.mark_unread), "mark unread"),
                 entry(binding_label(&keybinds.mark_inactive), "mark inactive"),
+                entry(binding_label(&keybinds.mark_muted), "mute / unmute"),
                 entry(binding_label(&keybinds.resize_mode), "resize mode"),
                 entry(
                     binding_label(&keybinds.resize_pane_left),

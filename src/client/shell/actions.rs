@@ -872,6 +872,7 @@ impl ClientShellState {
         let mark = match action {
             KeybindAction::ToggleUnreadMark => Some(ClientContextMenuAction::ToggleUnreadMark),
             KeybindAction::ToggleInactiveMark => Some(ClientContextMenuAction::ToggleInactiveMark),
+            KeybindAction::ToggleMuted => Some(ClientContextMenuAction::ToggleMuted),
             _ => None,
         };
         if let Some(mark) = mark {

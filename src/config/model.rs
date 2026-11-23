@@ -483,6 +483,8 @@ pub struct KeysConfig {
     pub mark_unread: BindingConfig,
     /// Mark the focused session inactive until it next does something. Default: "prefix+i"
     pub mark_inactive: BindingConfig,
+    /// Mute the focused session, or unmute it. Default: "prefix+m"
+    pub mark_muted: BindingConfig,
     /// Enter resize mode. Default: "prefix+r"
     pub resize_mode: BindingConfig,
     /// Resize the focused pane toward the left. Unset by default.
@@ -624,6 +626,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     mark_inactive: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    mark_muted: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     resize_mode: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     resize_pane_left: Option<BindingConfig>,
@@ -743,6 +747,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(zoom);
         apply_field!(mark_unread);
         apply_field!(mark_inactive);
+        apply_field!(mark_muted);
         apply_field!(resize_mode);
         apply_field!(resize_pane_left);
         apply_field!(resize_pane_down);
@@ -850,6 +855,7 @@ impl KeysConfig {
         copy_effective_action_field!(zoom, keybinds.zoom);
         copy_effective_action_field!(mark_unread, keybinds.mark_unread);
         copy_effective_action_field!(mark_inactive, keybinds.mark_inactive);
+        copy_effective_action_field!(mark_muted, keybinds.mark_muted);
         copy_effective_action_field!(resize_mode, keybinds.resize_mode);
         copy_effective_action_field!(resize_pane_left, keybinds.resize_pane_left);
         copy_effective_action_field!(resize_pane_down, keybinds.resize_pane_down);
@@ -1224,6 +1230,7 @@ impl Default for KeysConfig {
             zoom: BindingConfig::one("prefix+z"),
             mark_unread: BindingConfig::one("prefix+u"),
             mark_inactive: BindingConfig::one("prefix+i"),
+            mark_muted: BindingConfig::one("prefix+m"),
             resize_mode: BindingConfig::one("prefix+r"),
             resize_pane_left: BindingConfig::empty(),
             resize_pane_down: BindingConfig::empty(),
