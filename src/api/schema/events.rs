@@ -76,7 +76,10 @@ pub enum Subscription {
     },
     #[serde(rename = "pane.agent_status_changed")]
     PaneAgentStatusChanged {
-        pane_id: String,
+        /// The pane to watch. Without it, the subscription reports every pane's agent
+        /// status changes from the event history, with no initial or sampled event.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_status: Option<AgentStatus>,
     },

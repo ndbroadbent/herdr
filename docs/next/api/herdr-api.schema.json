@@ -4390,7 +4390,11 @@
                   ]
                 },
                 "pane_id": {
-                  "type": "string"
+                  "description": "The pane to watch. Without it, the subscription reports every pane's agent\nstatus changes from the event history, with no initial or sampled event.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "type": {
                   "const": "pane.agent_status_changed",
@@ -4398,8 +4402,7 @@
                 }
               },
               "required": [
-                "type",
-                "pane_id"
+                "type"
               ],
               "type": "object"
             },

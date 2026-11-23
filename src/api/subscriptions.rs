@@ -57,6 +57,13 @@ pub(super) struct ActiveAgentStatusChangedSubscription {
     request_prefix: String,
 }
 
+/// `pane.agent_status_changed` without a `pane_id`: every pane's changes, from the event
+/// history only.
+pub(super) struct ActiveAllAgentStatusChangedSubscription {
+    status_filter: Option<crate::api::schema::AgentStatus>,
+    last_sequence: u64,
+}
+
 pub(super) struct ActiveScrollChangedSubscription {
     pane_id: String,
     last_scroll: Option<PaneScrollInfo>,
@@ -101,6 +108,7 @@ pub(super) enum ActiveSubscription {
     Event(ActiveEventSubscription),
     OutputMatched(ActiveOutputMatchedSubscription),
     AgentStatusChanged(Box<ActiveAgentStatusChangedSubscription>),
+    AllAgentStatusChanged(ActiveAllAgentStatusChangedSubscription),
     ScrollChanged(ActiveScrollChangedSubscription),
 }
 
@@ -205,7 +213,16 @@ impl ActiveSubscription {
                 }))
             }
             Subscription::PaneAgentStatusChanged {
-                pane_id,
+                pane_id: None,
+                agent_status,
+            } => Ok(Self::AllAgentStatusChanged(
+                ActiveAllAgentStatusChangedSubscription {
+                    status_filter: agent_status,
+                    last_sequence: event_start_sequence,
+                },
+            )),
+            Subscription::PaneAgentStatusChanged {
+                pane_id: Some(pane_id),
                 agent_status,
             } => {
                 let last_sequence = event_hub.current_sequence();
@@ -262,6 +279,11 @@ impl ActiveSubscription {
             }
             Self::AgentStatusChanged(subscription) => {
                 serde_json::to_value(subscription.poll(api_tx, event_hub)?).ok()
+            }
+            Self::AllAgentStatusChanged(subscription) => {
+                let events = event_hub.events_after(subscription.last_sequence);
+                let (_, event) = subscription.take_matching(events, Some(1)).pop()?;
+                serde_json::to_value(event).ok()
             }
             Self::ScrollChanged(subscription) => {
                 serde_json::to_value(subscription.poll(api_tx)?).ok()
@@ -342,6 +364,19 @@ impl ActiveSubscription {
                 }
                 Ok(matching)
             }
+            Self::AllAgentStatusChanged(subscription) => {
+                let events = subscription_events_after(event_hub, subscription.last_sequence)?;
+                subscription
+                    .take_matching(events, None)
+                    .into_iter()
+                    .map(|(sequence, event)| {
+                        Ok((
+                            Some(sequence),
+                            serde_json::to_value(event).map_err(event_encoding_error)?,
+                        ))
+                    })
+                    .collect()
+            }
             // These subscriptions sample current state, not retained event history.
             // Keep their existing cadence even when a lifecycle batch was nonempty.
             Self::OutputMatched(_) | Self::ScrollChanged(_) => Ok(self
@@ -395,6 +430,64 @@ impl ActiveEventSubscription {
             }
         }
         None
+    }
+}
+
+impl ActiveAllAgentStatusChangedSubscription {
+    /// Converts the matching history events, advancing past every event it reads. With a
+    /// limit it stops at that many matches, leaving later events for the next poll.
+    fn take_matching(
+        &mut self,
+        events: Vec<(u64, crate::api::schema::EventEnvelope)>,
+        limit: Option<usize>,
+    ) -> Vec<(u64, SubscriptionEventEnvelope)> {
+        let mut matching = Vec::new();
+        for (sequence, event) in events {
+            if limit.is_some_and(|limit| matching.len() >= limit) {
+                break;
+            }
+            self.last_sequence = sequence;
+            let crate::api::schema::EventData::PaneAgentStatusChanged {
+                pane_id,
+                workspace_id,
+                tab_id,
+                tab_label,
+                agent_status,
+                agent,
+                title,
+                display_agent,
+                state_labels,
+            } = event.data
+            else {
+                continue;
+            };
+            if self
+                .status_filter
+                .is_some_and(|wanted| wanted != agent_status)
+            {
+                continue;
+            }
+            matching.push((
+                sequence,
+                SubscriptionEventEnvelope {
+                    event: SubscriptionEventKind::PaneAgentStatusChanged,
+                    data: SubscriptionEventData::PaneAgentStatusChanged(
+                        PaneAgentStatusChangedEvent {
+                            pane_id,
+                            workspace_id,
+                            tab_id,
+                            tab_label,
+                            agent_status,
+                            agent,
+                            title,
+                            display_agent,
+                            state_labels,
+                        },
+                    ),
+                },
+            ));
+        }
+        matching
     }
 }
 
@@ -864,6 +957,71 @@ mod tests {
         );
         assert_eq!(events[0]["data"]["workspace_id"], "first");
         assert_eq!(events[2]["data"]["workspace_id"], "third");
+    }
+
+    #[test]
+    fn an_agent_status_subscription_without_a_pane_reports_every_pane() {
+        let event_hub = EventHub::default();
+        let start = event_hub.current_sequence();
+        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let status_event = |pane_id: &str, agent_status| EventEnvelope {
+            event: EventKind::PaneAgentStatusChanged,
+            data: EventData::PaneAgentStatusChanged {
+                pane_id: pane_id.into(),
+                workspace_id: "w1".into(),
+                tab_id: Some(format!("{pane_id}-tab")),
+                tab_label: Some("email triage".into()),
+                agent_status,
+                agent: Some("claude".into()),
+                title: None,
+                display_agent: None,
+                state_labels: HashMap::new(),
+            },
+        };
+        let subscribe = |agent_status| {
+            // No pane probe: neither subscription asks the app anything.
+            ActiveSubscription::new(
+                Subscription::PaneAgentStatusChanged {
+                    pane_id: None,
+                    agent_status,
+                },
+                "all",
+                0,
+                &api_tx,
+                &event_hub,
+                start,
+            )
+            .unwrap()
+        };
+        let mut every_status = subscribe(None);
+        let mut blocked_only = subscribe(Some(AgentStatus::Blocked));
+        event_hub.push(status_event("w1:p1", AgentStatus::Working));
+        event_hub.push(workspace_focused_event("w1"));
+        event_hub.push(status_event("w1:p2", AgentStatus::Blocked));
+
+        let events = every_status.poll_batch(&api_tx, &event_hub).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| (
+                    event["event"].as_str().unwrap(),
+                    event["data"]["pane_id"].as_str().unwrap(),
+                    event["data"]["agent_status"].as_str().unwrap(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("pane.agent_status_changed", "w1:p1", "working"),
+                ("pane.agent_status_changed", "w1:p2", "blocked"),
+            ]
+        );
+        assert_eq!(events[0]["data"]["tab_label"], "email triage");
+        assert!(every_status
+            .poll_batch(&api_tx, &event_hub)
+            .unwrap()
+            .is_empty());
+        let blocked = blocked_only.poll_batch(&api_tx, &event_hub).unwrap();
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0]["data"]["pane_id"], "w1:p2");
     }
 
     #[test]
