@@ -146,9 +146,10 @@ herdr terminal session observe w1:p1 --cols 120 --rows 40
 ```
 
 It prints newline-delimited JSON `terminal.frame` records with base64 ANSI
-bytes, then a `terminal.closed` record when the server closes the stream.
-Multiple observers can watch the same terminal without taking input, resize,
-scroll, or takeover ownership.
+bytes, then a `terminal.closed` record when the stream ends. Multiple observers
+can watch the same terminal without resizing it or taking scroll or takeover
+ownership; add `--input` to let one type keys and pastes. See
+[Pane streams](/docs/socket-api/#pane-streams) for the full contract.
 
 For an interactive bridge, use a writable terminal session controller:
 

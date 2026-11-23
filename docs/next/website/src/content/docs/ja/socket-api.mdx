@@ -780,6 +780,22 @@ herdr agent wait w1:p1 --until blocked
 
 `agent prompt` がエージェントの状態ごとに何をするかは英語版を参照してください。`blocked` のエージェントには何も送信せず `agent_blocked` を返します。
 
+### ペインストリーム
+
+`herdr terminal session observe|control` はペインの画面を改行区切りの JSON で出力し、標準入力から JSON のコマンドを受け取ります。レコード、コマンド、終了コードの詳細は英語版を参照してください。
+
+#### レコード
+
+`terminal.opened`、`terminal.frame`、`terminal.scrollback`、`terminal.error`、`terminal.closed` の形式は英語版を参照してください。
+
+#### コマンド
+
+`terminal.keys`、`terminal.paste`、`terminal.scrollback` と、コントローラー専用のコマンドは英語版を参照してください。
+
+#### 終了コードとエラーコード
+
+`terminal.closed` の `code` と終了ステータスは英語版を参照してください。
+
 ### エラーコード
 
 エラーコードの一覧は英語版を参照してください。`message` ではなく `code` で判定してください。

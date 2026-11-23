@@ -44,7 +44,7 @@ mod workspace;
 mod worktree;
 
 const TERMINAL_SESSION_OBSERVE_USAGE: &str =
-    "usage: herdr terminal session observe <target> [--cols N] [--rows N]";
+    "usage: herdr terminal session observe <target> [--input] [--cols N] [--rows N]";
 const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: herdr terminal session control <target> [--takeover] [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
@@ -575,13 +575,15 @@ fn terminal_session_control(args: &[String]) -> std::io::Result<i32> {
         Err(code) => return Ok(code),
     };
 
+    if target::is_remote() {
+        return target::run_terminal_session_on_machine("control", &options);
+    }
     crate::client::run_terminal_session_control(
         options.target,
         options.takeover,
         options.cols,
         options.rows,
-    )?;
-    Ok(0)
+    )
 }
 
 fn terminal_session_observe(args: &[String]) -> std::io::Result<i32> {
@@ -595,15 +597,24 @@ fn terminal_session_observe(args: &[String]) -> std::io::Result<i32> {
         Err(code) => return Ok(code),
     };
 
-    crate::client::run_terminal_session_observe(options.target, options.cols, options.rows)?;
-    Ok(0)
+    if target::is_remote() {
+        return target::run_terminal_session_on_machine("observe", &options);
+    }
+    crate::client::run_terminal_session_observe(
+        options.target,
+        options.cols,
+        options.rows,
+        options.input,
+    )
 }
 
-struct TerminalSessionOptions {
-    target: String,
-    cols: u16,
-    rows: u16,
-    takeover: bool,
+pub(crate) struct TerminalSessionOptions {
+    pub(crate) target: String,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+    pub(crate) takeover: bool,
+    /// Observe only: the observer may type (keys and paste).
+    pub(crate) input: bool,
 }
 
 fn parse_terminal_session_options(
@@ -627,11 +638,16 @@ fn parse_terminal_session_options(
     let mut cols = 120;
     let mut rows = 40;
     let mut takeover = false;
+    let mut input = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--takeover" if allow_takeover => {
                 takeover = true;
+                i += 1;
+            }
+            "--input" if !allow_takeover => {
+                input = true;
                 i += 1;
             }
             "--cols" => {
@@ -667,6 +683,7 @@ fn parse_terminal_session_options(
         cols,
         rows,
         takeover,
+        input,
     }))
 }
 

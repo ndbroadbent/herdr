@@ -78,7 +78,9 @@ herdr --machine "Build machine" worktree create --cwd /srv/project --branch revi
 
 The selector must match an enabled saved profile ID or a unique, case-sensitive label, not an arbitrary SSH hostname. The saved remote session is used; combining `--machine` with `--session` or `--remote` is an error. Without the prefix, commands retain their existing local session/socket behavior.
 
-Supported commands are `workspace`, `worktree`, `tab`, `pane`, `notification`, `agent` (except local `explain --file`), `api snapshot`, `status server`, and API-backed plugin commands (`link`, `unlink`, `enable`, `disable`, `list`, `action`, `log`, `pane`). Server commands support `stop`, `reload-config`, `agent-manifests`, and `reload-agent-manifests`. Local installation/configuration commands, plugin installation, session management, and other interactive terminal attachment are not forwarded.
+Supported commands are `workspace`, `worktree`, `tab`, `pane`, `notification`, `agent` (except local `explain --file`), `terminal session observe` and `control`, `api snapshot`, `status server`, and API-backed plugin commands (`link`, `unlink`, `enable`, `disable`, `list`, `action`, `log`, `pane`). Server commands support `stop`, `reload-config`, `agent-manifests`, and `reload-agent-manifests`. Local installation/configuration commands, plugin installation, session management, and other interactive terminal attachment are not forwarded.
+
+[Pane streams](/docs/socket-api/#pane-streams) (`terminal session observe` and `control`) run on the machine over SSH in the same way, without a terminal, so their JSON records and commands pass through unchanged.
 
 `herdr --machine <label-or-id> agent attach <target> [--takeover]` attaches your terminal to an agent on that machine. It runs the machine's own Herdr in its saved session inside an interactive SSH terminal, so keys, resizing, and detaching (prefix, then `q`) behave as they do locally. The exit code is the remote attach's. Windows machines are not supported.
 
@@ -423,7 +425,7 @@ Use `pane send-text`, `pane send-keys`, `pane run`, and `terminal attach` for or
 ```bash
 herdr terminal attach <terminal_id> [--takeover]
 herdr terminal session control <target> [--takeover] [--cols N] [--rows N]
-herdr terminal session observe <target> [--cols N] [--rows N]
+herdr terminal session observe <target> [--input] [--cols N] [--rows N]
 herdr terminal title set <title>
 herdr terminal title clear
 ```
@@ -432,8 +434,9 @@ Detach from direct attach with `ctrl+b q`. Send literal `ctrl+b` with `ctrl+b ct
 `terminal session control` opens a writable live terminal stream for a pane,
 terminal, or agent target. It prints the same newline-delimited
 `terminal.frame` and `terminal.closed` records as observe mode. It reads
-newline-delimited JSON commands on stdin: `terminal.input`, `terminal.resize`,
-`terminal.scroll`, `terminal.mouse`, and `terminal.release`. One controller can
+newline-delimited JSON commands on stdin: `terminal.input`, `terminal.keys`,
+`terminal.paste`, `terminal.scrollback`, `terminal.resize`, `terminal.scroll`,
+`terminal.mouse`, and `terminal.release`. One controller can
 own a terminal at a time; use `--takeover` to replace it.
 `terminal.mouse` sends one mouse event at a zero-based cell of the controller's
 viewport, for example
@@ -444,11 +447,15 @@ and Alt = 4 (default 0). A click is `down` followed by `up`. Herdr encodes the
 event for the application's mouse mode and drops it when the application has
 not enabled mouse reporting, so a plain shell never receives stray input.
 `move` reaches only applications that track all mouse motion.
-`terminal session observe` opens a read-only live terminal stream for a pane,
-terminal, or agent target. It prints newline-delimited JSON `terminal.frame`
-records with base64-encoded ANSI bytes, then a `terminal.closed` record when
-the server closes the stream. Multiple observers can watch the same terminal
-without taking input, resize, scroll, or takeover authority.
+`terminal session observe` opens a live terminal stream for a pane,
+terminal, or agent target that never resizes the pane. It prints
+newline-delimited JSON `terminal.frame` records with base64-encoded ANSI
+bytes, then a `terminal.closed` record when the stream ends. Multiple
+observers can watch the same terminal without taking resize, scroll, or
+takeover authority. With `--input`, an observer can also type with
+`terminal.keys` and `terminal.paste`. Both modes answer
+`terminal.scrollback`. The records, commands, and close codes are a stable
+contract; see [Pane streams](/docs/socket-api/#pane-streams).
 On Linux and macOS, an observer is disconnected if a socket write makes no progress
 for 30 seconds. A stalled stream can end without a final `terminal.closed` record;
 the pane and other clients keep running. Quiet panes do not trigger this timeout.

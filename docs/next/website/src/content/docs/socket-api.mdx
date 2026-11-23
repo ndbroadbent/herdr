@@ -1011,6 +1011,80 @@ It also returns `agent_not_ready` when the agent is no longer the pane's foregro
 
 With `--wait`, a prompt sent in any state but `working` has five seconds to make the agent `working` or `blocked`, or the command returns `agent_prompt_stalled`. It then waits for one of the `--until` states, by default `idle`, `done` or `blocked`. The wait doesn't follow turns: a prompt sent while the agent is `working` can be satisfied by the end of the turn already running. A `timeout` or `agent_prompt_stalled` doesn't prove the text wasn't sent, so read the agent before sending it again.
 
+### Pane streams
+
+A pane stream shows a pane's live screen and lets you type into it, from a program that isn't a Herdr client: a web or tablet view, a chat bridge, a recorder. Run it as a subprocess and talk to it in newline-delimited JSON: records on stdout, commands on stdin. The raw client socket underneath is private, so use these commands rather than speaking it yourself.
+
+```bash
+herdr terminal session observe <target> [--input] [--cols N] [--rows N]
+herdr terminal session control <target> [--takeover] [--cols N] [--rows N]
+herdr --machine <label> terminal session observe <target> --input
+```
+
+`<target>` is a pane ID, a terminal ID or an agent target. Pick the mode by what the viewer needs:
+
+| | `observe` | `observe --input` | `control` |
+| --- | --- | --- | --- |
+| How many at once | Any number | Any number | One; `--takeover` replaces it |
+| Resizes the pane | Never | Never | Yes, to `--cols` and `--rows` and every `terminal.resize` |
+| Typing | No | `terminal.keys`, `terminal.paste` | Those, plus raw `terminal.input`, `terminal.mouse`, `terminal.scroll` |
+| Scrollback | `terminal.scrollback` | `terminal.scrollback` | `terminal.scrollback` |
+
+A viewer that sits beside a person's own Herdr window should be an observer: it never changes the pane's size, so it never disturbs their layout. Frames are rendered at the observer's `--cols` and `--rows` (default 120 by 40). When that differs from the pane's own size, the observer sees only part of the screen or blank space around it, so match the pane's size where you can. `control` is for a bridge that is the pane's only screen.
+
+#### Records
+
+Every stream starts with `terminal.opened`, then a full frame, then changes, and ends with exactly one `terminal.closed`:
+
+```json
+{"type":"terminal.opened","mode":"observe_input","pane_id":"w1:p3","terminal_id":"term_6f2a91"}
+{"type":"terminal.frame","seq":1,"encoding":"ansi","width":120,"height":40,"full":true,"bytes":"G1s/MjAyNmg..."}
+{"type":"terminal.frame","seq":2,"encoding":"ansi","width":120,"height":40,"full":false,"bytes":"..."}
+{"type":"terminal.closed","code":"pane_closed","reason":"terminal attach ended: terminal term_6f2a91 not found"}
+```
+
+- `terminal.opened`: the target resolved and the stream was requested. `mode` is `observe`, `observe_input` or `control`. `pane_id` can change if the pane moves to another workspace; `terminal_id` never does.
+- `terminal.frame`: base64 ANSI bytes for a terminal of `width` by `height`. With `full: true` it redraws the whole screen, cursor position and visibility included, so a viewer that missed frames resynchronises from the next full one. Otherwise it changes the previous screen. `seq` counts up within one stream.
+- `terminal.scrollback`: the answer to `terminal.scrollback`, with `text`, `format`, `lines`, `truncated` and your `id`.
+- `terminal.error`: a command failed; the stream carries on. It has `code`, `message`, and the failed command's `command` and `id` when it had them.
+- `terminal.closed`: the stream is over and the process exits. Match on `code`, not `reason`.
+
+Commands sent before the first frame wait for it, for up to five seconds.
+
+#### Commands
+
+Each command is one JSON line on stdin. Add an `id` to match a reply or error to it.
+
+| Command | Modes | Does |
+| --- | --- | --- |
+| `{"type":"terminal.keys","keys":["esc"]}` | `observe --input`, `control` | Presses keys, encoded for what the application has turned on, with the same names as `herdr pane send-keys`: `enter`, `esc`, `tab`, `backspace`, `up`, `ctrl+c`, `shift+tab`, `f5`, a single character |
+| `{"type":"terminal.paste","text":"…"}` | `observe --input`, `control` | Pastes text: as a bracketed paste when the application has turned paste mode on, otherwise as typed text. It doesn't press Enter; send `terminal.keys` `["enter"]` for that |
+| `{"type":"terminal.scrollback","lines":200,"format":"text"}` | All | Replies with the latest `lines` rendered rows (default 200, at most 10000), scrollback included. `format` is `text` (default) or `ansi` |
+| `terminal.input`, `terminal.resize`, `terminal.scroll`, `terminal.mouse`, `terminal.release` | `control` | Raw bytes, the controller's size, viewport scrolling, mouse events, and ending the stream; see the [CLI reference](/docs/cli-reference/#direct-terminal-attach) |
+
+An observer's keys and pastes are applied in the order sent. A controller's `terminal.paste` and `terminal.input` travel on its own stream and keep their order, but its `terminal.keys` go through the API, so a controller that mixes them should wait a moment after raw input before pressing keys.
+
+#### Close and error codes
+
+| `code` | In | Meaning | Exit status |
+| --- | --- | --- | --- |
+| `pane_closed` | `terminal.closed` | The pane closed or its process exited | 0 |
+| `released` | `terminal.closed` | The controller sent `terminal.release` or closed stdin | 0 |
+| `taken_over` | `terminal.closed` | Another controller took over with `--takeover` | 0 |
+| `server_restarting` | `terminal.closed` | The server is handing off to a new one; start the stream again in a moment | 0 |
+| `server_stopping` | `terminal.closed` | The server is stopping | 0 |
+| `target_not_found` | `terminal.closed` | No pane, terminal or agent matches the target | 1 |
+| `controller_exists` | `terminal.closed` | Another controller has the pane; use `--takeover` or observe | 1 |
+| `busy` | `terminal.closed` | The pane is in the middle of a read; try again | 1 |
+| `disconnected` | `terminal.closed` | The connection to Herdr ended without a reason, for example a stalled stream cut off after 30 seconds | 1 |
+| `error` | `terminal.closed` | Anything else; `reason` explains | 1 |
+| `input_not_enabled` | `terminal.error` | Keys or paste sent to an observer started without `--input` | |
+| `control_only` | `terminal.error` | A controller command sent to an observer | |
+| `invalid_command` | `terminal.error` | Not JSON, an unknown `type`, or bad fields | |
+| API codes such as `invalid_key`, `pane_not_found` | `terminal.error` | From the API call behind `terminal.keys`, `terminal.paste` or `terminal.scrollback`; see [error codes](#error-codes) | |
+
+With `--machine`, the machine's own Herdr runs the stream over SSH and the records pass through unchanged, so they follow that machine's Herdr version. Windows machines aren't supported yet.
+
 ### Error codes
 
 Every error has the shape `{"id":"…","error":{"code":"…","message":"…"}}`. Match on `code`: `message` is written for people and can change. The CLI prints the error as JSON on stderr and exits with status 1; a usage error exits with status 2 and no JSON.

@@ -837,9 +837,13 @@ impl RemoteSsh {
     /// An interactive `ssh -t` that runs `remote_command` in a terminal on the machine, with
     /// the managed connection options but none of the background-only ones, so SSH can still
     /// ask for a passphrase or host key.
-    pub(super) fn terminal_command(&self, remote_command: &str) -> Command {
+    /// `tty`: an interactive terminal (`-t`); otherwise a plain byte pipe (`-T`).
+    pub(super) fn terminal_command(&self, remote_command: &str, tty: bool) -> Command {
         let mut command = self.base_command();
-        command.arg("-t").arg(&self.target).arg(remote_command);
+        command
+            .arg(if tty { "-t" } else { "-T" })
+            .arg(&self.target)
+            .arg(remote_command);
         command
     }
 

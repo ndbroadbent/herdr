@@ -163,6 +163,7 @@ pub(crate) fn run_saved_terminal_attach(
     target: &str,
     session: &str,
     attach_args: &[String],
+    tty: bool,
 ) -> io::Result<i32> {
     let ssh = validated_saved_ssh(profile_id, target, session)?;
     let metadata_cache =
@@ -181,12 +182,12 @@ pub(crate) fn run_saved_terminal_attach(
         if metadata.os == "windows" {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "direct terminal attach is not supported on Windows machines yet",
+                "attaching to or streaming a pane is not supported on Windows machines yet",
             ));
         }
         let command =
             super::attach::remote_terminal_attach_command(&metadata, session, attach_args);
-        let status = ssh.terminal_command(&command).status()?;
+        let status = ssh.terminal_command(&command, tty).status()?;
         // A cached executable that has moved never started, so nothing was attached: find it
         // again and retry once.
         if status.code() == Some(COMMAND_NOT_FOUND) && used_cached_metadata {

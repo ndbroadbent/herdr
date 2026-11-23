@@ -65,6 +65,35 @@ pub(super) fn is_remote() -> bool {
 
 /// Runs a direct attach on the machine this command targets, in this terminal over SSH.
 pub(super) fn run_attach_on_machine(attach_args: Vec<String>) -> io::Result<i32> {
+    run_on_machine(attach_args, true)
+}
+
+/// Runs a pane stream on the machine this command targets: its own Herdr streams the pane,
+/// and the records and commands pass through SSH unchanged.
+pub(super) fn run_terminal_session_on_machine(
+    mode: &str,
+    options: &super::TerminalSessionOptions,
+) -> io::Result<i32> {
+    let mut args = vec![
+        "terminal".to_owned(),
+        "session".to_owned(),
+        mode.to_owned(),
+        options.target.clone(),
+        "--cols".to_owned(),
+        options.cols.to_string(),
+        "--rows".to_owned(),
+        options.rows.to_string(),
+    ];
+    if options.takeover {
+        args.push("--takeover".to_owned());
+    }
+    if options.input {
+        args.push("--input".to_owned());
+    }
+    run_on_machine(args, false)
+}
+
+fn run_on_machine(remote_args: Vec<String>, tty: bool) -> io::Result<i32> {
     let profile = TARGET
         .with(|target| {
             target
@@ -77,7 +106,8 @@ pub(super) fn run_attach_on_machine(attach_args: Vec<String>) -> io::Result<i32>
         profile.id.as_str(),
         &profile.target,
         &profile.session,
-        &attach_args,
+        &remote_args,
+        tty,
     )
     .map_err(|error| {
         io::Error::new(
@@ -323,6 +353,10 @@ fn validate_machine_command(args: &[String]) -> Result<(), String> {
                     .any(|arg| arg == "--file" || arg.starts_with("--file=")))
         }
         "api" => subcommand == "snapshot",
+        "terminal" => {
+            subcommand == "session"
+                && matches!(args.get(3).map(String::as_str), Some("observe" | "control"))
+        }
         "status" => subcommand == "server",
         "plugin" => matches!(
             subcommand,
@@ -461,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn machine_commands_reject_local_side_effects_and_allow_agent_attach() {
+    fn machine_commands_reject_local_side_effects_and_allow_attach_and_pane_streams() {
         for command in [
             &["update"][..],
             &["config", "reset-keys"],
@@ -469,7 +503,7 @@ mod tests {
             &["session", "delete", "default"],
             &["server", "live-handoff"],
             &["terminal", "attach", "w4:p1"],
-            &["terminal", "session", "control", "w4:p1"],
+            &["terminal", "session", "list"],
             &["plugin", "install", "./plugin"],
             &["integration", "install", "pi"],
             &["api", "schema", "--output", "schema.json"],
@@ -482,6 +516,8 @@ mod tests {
         for command in [
             &["agent", "list"][..],
             &["agent", "attach", "w4:p1"],
+            &["terminal", "session", "observe", "w4:p1", "--input"],
+            &["terminal", "session", "control", "w4:p1"],
             &["agent", "wait", "w4:p1"],
             &["pane", "split", "w4:p1", "--direction", "right"],
             &["workspace", "list"],

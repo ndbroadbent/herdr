@@ -774,6 +774,22 @@ herdr agent wait w1:p1 --until blocked
 
 `agent prompt` 在智能体各个状态下的行为请参阅英文文档。智能体处于 `blocked` 时不会发送任何内容，并返回 `agent_blocked`。
 
+### 窗格流
+
+`herdr terminal session observe|control` 以换行分隔的 JSON 输出窗格画面，并从标准输入读取 JSON 命令。记录、命令和关闭代码的详细说明见英文文档。
+
+#### 记录
+
+`terminal.opened`、`terminal.frame`、`terminal.scrollback`、`terminal.error` 和 `terminal.closed` 的格式见英文文档。
+
+#### 命令
+
+`terminal.keys`、`terminal.paste`、`terminal.scrollback` 以及仅控制器可用的命令见英文文档。
+
+#### 关闭代码和错误码
+
+`terminal.closed` 的 `code` 和退出状态见英文文档。
+
 ### 错误码
 
 完整的错误码列表请参阅英文文档。请按 `code` 判断，不要依赖 `message`。

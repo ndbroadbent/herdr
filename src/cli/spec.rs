@@ -754,6 +754,7 @@ fn terminal_command() -> Command {
                     Command::new("observe")
                         .about("Observe a terminal stream")
                         .arg(required("target", "TARGET"))
+                        .arg(flag("input"))
                         .arg(option("cols", "N"))
                         .arg(option("rows", "N")),
                 ),
