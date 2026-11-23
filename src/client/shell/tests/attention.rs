@@ -1,7 +1,7 @@
 use super::*;
 use crate::api::schema::Method;
 use crate::input::{KeybindAction, KeybindMatch};
-use crate::metadata_tokens::{MARK_INACTIVE_TOKEN, MARK_UNREAD_TOKEN};
+use crate::metadata_tokens::{MARK_INACTIVE_TOKEN, MARK_MUTED_TOKEN, MARK_UNREAD_TOKEN};
 use crate::raw_input::RawInputEvent;
 use crossterm::event::{MouseButton, MouseEventKind};
 use std::collections::HashMap;
@@ -149,6 +149,44 @@ fn right_clicking_an_agent_row_offers_marks_that_match_its_state() {
     let outcome = press(&mut state, MouseButton::Left, target.x, target.y);
 
     assert_eq!(reported_tokens(&outcome), set(MARK_UNREAD_TOKEN));
+}
+
+fn click_agent_menu_item(state: &mut ClientShellState, label: &str) -> ClientShellInput {
+    let row = state.hits.agents.first().expect("agent row").0;
+    press(state, MouseButton::Right, row.x + 1, row.y);
+    state.compose(106, 30).expect("menu frame");
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("agent menu");
+    };
+    let labels = menu
+        .items()
+        .iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+    let index = labels
+        .iter()
+        .position(|item| *item == label)
+        .unwrap_or_else(|| panic!("{label} in {labels:?}"));
+    let target = state.hits.context_menu_rows[index].0;
+    press(state, MouseButton::Left, target.x, target.y)
+}
+
+#[test]
+fn muting_from_the_agent_menu_clears_unread_and_unmuting_clears_the_mark() {
+    let mut unmuted = shell(&Config::default(), &[(MARK_UNREAD_TOKEN, "1")]);
+    assert_eq!(
+        reported_tokens(&click_agent_menu_item(&mut unmuted, "Mute")),
+        HashMap::from([
+            (MARK_MUTED_TOKEN.to_string(), Some("1".to_string())),
+            (MARK_UNREAD_TOKEN.to_string(), None),
+        ])
+    );
+
+    let mut muted = shell(&Config::default(), &[(MARK_MUTED_TOKEN, "1")]);
+    assert_eq!(
+        reported_tokens(&click_agent_menu_item(&mut muted, "Unmute")),
+        HashMap::from([(MARK_MUTED_TOKEN.to_string(), None)])
+    );
 }
 
 #[test]

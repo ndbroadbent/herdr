@@ -457,6 +457,19 @@ impl AppState {
         (changed_panes, changed_workspaces)
     }
 
+    /// The pane's session is muted: no chimes, toasts or completions to come back to.
+    pub(crate) fn pane_is_muted(&self, ws_idx: usize, pane_id: PaneId) -> bool {
+        self.workspaces
+            .get(ws_idx)
+            .and_then(|workspace| workspace.terminal_id(pane_id))
+            .and_then(|terminal_id| self.terminals.get(terminal_id))
+            .is_some_and(|terminal| {
+                terminal
+                    .metadata_tokens
+                    .contains(crate::metadata_tokens::MARK_MUTED_TOKEN)
+            })
+    }
+
     pub(crate) fn pane_is_in_active_tab(&self, ws_idx: usize, pane_id: PaneId) -> bool {
         let Some(active_ws_idx) = self.active else {
             return false;
@@ -1995,6 +2008,7 @@ impl AppState {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
         let suppress_active_tab_notifications =
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
+        let muted = self.pane_is_muted(ws_idx, pane_id);
         let pane = self.workspaces[ws_idx]
             .tabs
             .iter_mut()
@@ -2004,7 +2018,8 @@ impl AppState {
         if change.state != AgentState::Idle {
             pane.seen = true;
         } else if !suppress_completion && is_completion_transition(change) {
-            pane.seen = suppress_active_tab_notifications;
+            // Nobody needs to come back to a muted session's work.
+            pane.seen = suppress_active_tab_notifications || muted;
         }
         let seen = pane.seen;
         let terminal_id = pane.attached_terminal_id.clone();
@@ -2030,7 +2045,7 @@ impl AppState {
             }
         }
 
-        if !suppress_completion {
+        if !suppress_completion && !muted {
             if let Some(delivery) =
                 self.record_or_deliver_agent_notification(ws_idx, pane_id, change)
             {
@@ -5037,6 +5052,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_muted_session_goes_yellow_then_green_without_a_chime() {
+        use crate::metadata_tokens::MARK_MUTED_TOKEN;
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.outer_terminal_focus = Some(true);
+        state.active = Some(0);
+        state.toast_config.delay_seconds = 5;
+        let pane = *state.workspaces[1].panes.keys().next().unwrap();
+        set_terminal_state(&mut state, 1, pane, AgentState::Idle);
+        set_mark(&mut state, 1, pane, MARK_MUTED_TOKEN);
+
+        for next in [
+            AgentState::Working,
+            AgentState::Blocked,
+            AgentState::Working,
+            AgentState::Idle,
+        ] {
+            report_state(&mut state, pane, next);
+            assert!(
+                state.workspaces[1].panes.get(&pane).unwrap().seen,
+                "{next:?}: nothing to come back to"
+            );
+            assert!(
+                state.pending_agent_notifications.is_empty(),
+                "{next:?}: no chime or toast"
+            );
+        }
+        assert!(
+            has_mark(&mut state, 1, pane, MARK_MUTED_TOKEN),
+            "activity keeps it muted"
+        );
+
+        // Unmuted, the same work is a completion to come back to.
+        pane_tokens(&mut state, 1, pane).remove(MARK_MUTED_TOKEN);
+        report_state(&mut state, pane, AgentState::Working);
+        report_state(&mut state, pane, AgentState::Idle);
+        assert!(!state.workspaces[1].panes.get(&pane).unwrap().seen);
+        assert!(!state.pending_agent_notifications.is_empty());
     }
 
     #[test]

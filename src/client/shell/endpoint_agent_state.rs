@@ -171,6 +171,13 @@ impl EndpointAgentPresentation {
     }
 
     fn projected_status(&self, agent: &ClientShellAgent) -> AgentStatus {
+        // A muted session only ever shows working or idle.
+        if super::attention::is_muted(agent) {
+            return match agent.agent_status {
+                AgentStatus::Idle | AgentStatus::Done | AgentStatus::Blocked => AgentStatus::Idle,
+                status => status,
+            };
+        }
         match agent.agent_status {
             AgentStatus::Idle | AgentStatus::Done => {
                 if self.seen(agent) && !super::attention::is_marked_unread(agent) {
@@ -521,6 +528,29 @@ mod tests {
             );
             presentation.project_snapshot(&mut marked);
             assert_eq!(marked.agents[0].agent_status, status);
+        }
+    }
+
+    #[test]
+    fn a_muted_agent_shows_only_working_or_idle() {
+        for (status, shown) in [
+            (AgentStatus::Working, AgentStatus::Working),
+            (AgentStatus::Blocked, AgentStatus::Idle),
+            (AgentStatus::Done, AgentStatus::Idle),
+            (AgentStatus::Idle, AgentStatus::Idle),
+        ] {
+            let mut presentation = EndpointAgentPresentation::default();
+            let mut working = with_mark(
+                snapshot(AgentStatus::Working, 4, 1),
+                crate::metadata_tokens::MARK_MUTED_TOKEN,
+            );
+            presentation.project_snapshot(&mut working);
+            let mut next = with_mark(
+                snapshot(status, 5, 2),
+                crate::metadata_tokens::MARK_MUTED_TOKEN,
+            );
+            presentation.project_snapshot(&mut next);
+            assert_eq!(next.agents[0].agent_status, shown, "{status:?}");
         }
     }
 

@@ -80,7 +80,10 @@ impl ClientContextMenuOverlay {
                 items
             }
             ClientContextMenuTarget::Agent {
-                unread, inactive, ..
+                unread,
+                inactive,
+                muted,
+                ..
             } => vec![
                 item(
                     if *unread {
@@ -98,6 +101,7 @@ impl ClientContextMenuOverlay {
                     },
                     Action::ToggleInactiveMark,
                 ),
+                item(if *muted { "Unmute" } else { "Mute" }, Action::ToggleMuted),
             ],
         }
     }
@@ -199,6 +203,7 @@ impl ClientShellState {
         let target = ClientContextMenuTarget::Agent {
             unread: super::attention::is_marked_unread(agent),
             inactive: super::attention::is_marked_inactive(agent),
+            muted: super::attention::is_muted(agent),
             pane_id,
         };
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
@@ -225,11 +230,17 @@ impl ClientShellState {
         let method = match action {
             ClientContextMenuAction::ToggleUnreadMark => super::attention::toggle_unread(agent),
             ClientContextMenuAction::ToggleInactiveMark => super::attention::toggle_inactive(agent),
+            ClientContextMenuAction::ToggleMuted => super::attention::toggle_muted(agent),
             _ => return None,
         };
-        let marking_inactive = action == ClientContextMenuAction::ToggleInactiveMark
-            && !super::attention::is_marked_inactive(agent);
-        if marking_inactive {
+        let dismisses_completion = match action {
+            ClientContextMenuAction::ToggleInactiveMark => {
+                !super::attention::is_marked_inactive(agent)
+            }
+            ClientContextMenuAction::ToggleMuted => !super::attention::is_muted(agent),
+            _ => false,
+        };
+        if dismisses_completion {
             self.acknowledge_active_endpoint_agent(pane_id);
         }
         Some(method)

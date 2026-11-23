@@ -18,6 +18,9 @@ pub(crate) const MAX_SEQUENCE_SOURCES: usize = 32;
 /// clients and survive restarts without any wire or API changes of their own.
 pub(crate) const MARK_UNREAD_TOKEN: &str = "mark_unread";
 pub(crate) const MARK_INACTIVE_TOKEN: &str = "mark_inactive";
+/// A muted session never chimes, toasts, or shows as done or blocked: it goes yellow while it
+/// works and back to green. Unlike inactive, it stays until a person unmutes it.
+pub(crate) const MARK_MUTED_TOKEN: &str = "mark_muted";
 pub(crate) const MARK_SET_VALUE: &str = "1";
 
 pub(crate) fn sequence_is_fresh(

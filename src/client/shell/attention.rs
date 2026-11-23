@@ -1,10 +1,13 @@
-//! Attention marks a person sets on a session: unread (blue until they come back to it) and
-//! inactive (grey until the session next does something). The server stores them as pane tokens.
+//! Attention marks a person sets on a session: unread (blue until they come back to it),
+//! inactive (grey until the session next does something) and muted (never chimes, and shows
+//! only working or idle). The server stores them as pane tokens.
 
 use std::collections::HashMap;
 
 use crate::api::schema::{Method, PaneReportMetadataParams};
-use crate::metadata_tokens::{MARK_INACTIVE_TOKEN, MARK_SET_VALUE, MARK_UNREAD_TOKEN};
+use crate::metadata_tokens::{
+    MARK_INACTIVE_TOKEN, MARK_MUTED_TOKEN, MARK_SET_VALUE, MARK_UNREAD_TOKEN,
+};
 use crate::protocol::ClientShellAgent;
 
 const MARK_SOURCE: &str = "herdr:marks";
@@ -19,6 +22,23 @@ pub(super) fn is_marked_unread(agent: &ClientShellAgent) -> bool {
 
 pub(super) fn is_marked_inactive(agent: &ClientShellAgent) -> bool {
     has_token(agent, MARK_INACTIVE_TOKEN)
+}
+
+pub(super) fn is_muted(agent: &ClientShellAgent) -> bool {
+    has_token(agent, MARK_MUTED_TOKEN)
+}
+
+pub(super) fn toggle_muted(agent: &ClientShellAgent) -> Method {
+    let muting = !is_muted(agent);
+    let mut tokens = HashMap::from([(
+        MARK_MUTED_TOKEN.to_string(),
+        muting.then(|| MARK_SET_VALUE.to_string()),
+    )]);
+    // A muted session has nothing waiting to be read.
+    if muting {
+        tokens.insert(MARK_UNREAD_TOKEN.to_string(), None);
+    }
+    report_tokens(agent, tokens)
 }
 
 pub(super) fn toggle_unread(agent: &ClientShellAgent) -> Method {

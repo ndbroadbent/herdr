@@ -299,6 +299,14 @@ pub(super) fn agent_row(
         .get(status_text(agent.agent_status))
         .map(String::as_str)
         .unwrap_or_else(|| sidebar_status_text(agent.agent_status));
+    // Say so, so a muted session isn't mistaken for one that is simply quiet.
+    let muted_state_text;
+    let state_text = if super::attention::is_muted(agent) {
+        muted_state_text = format!("{state_text} · muted");
+        muted_state_text.as_str()
+    } else {
+        state_text
+    };
     let canonical_agent = agent
         .agent
         .as_deref()

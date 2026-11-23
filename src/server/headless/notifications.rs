@@ -47,6 +47,9 @@ impl HeadlessServer {
         agent_label: Option<&str>,
         known_agent: Option<crate::detect::Agent>,
     ) -> bool {
+        if self.app.state.pane_is_muted(ws_idx, pane_id) {
+            return false;
+        }
         let Some(kind) =
             crate::app::actions::notification_toast_for_state_change(false, previous_state, state)
         else {
@@ -112,7 +115,9 @@ impl HeadlessServer {
         &mut self,
         update: &crate::app::actions::PaneStateUpdate,
     ) {
-        if self.app.state.toast_config.delay_seconds != 0 {
+        if self.app.state.toast_config.delay_seconds != 0
+            || self.app.state.pane_is_muted(update.ws_idx, update.pane_id)
+        {
             return;
         }
 

@@ -533,6 +533,7 @@ pub(super) enum ClientContextMenuAction {
     ClosePane,
     ToggleUnreadMark,
     ToggleInactiveMark,
+    ToggleMuted,
 }
 
 #[derive(Debug)]
@@ -560,6 +561,7 @@ pub(super) enum ClientContextMenuTarget {
         pane_id: String,
         unread: bool,
         inactive: bool,
+        muted: bool,
     },
 }
 

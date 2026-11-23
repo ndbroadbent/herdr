@@ -993,6 +993,8 @@ A subscription connection also ends when the server stops, restarts or hands off
 
 `idle` and `done` mean the same to the agent: both take input. An agent in a background tab, such as one started with `herdr tab create --no-focus`, finishes as `done`, so wait for both with `--until idle --until done`. There's no status for an agent that has exited: it leaves `agent.list`, and `pane.agent_exited` reports it. An unusual dialog can show as `idle` until Herdr's detection rules learn its shape, so `idle` is not a reason to approve anything.
 
+A muted session (right-click its agent row and choose **Mute**) finishes as `idle`, never `done`, and sends no sound or notification. The TUI shows it only as working (yellow) or idle (green), and an agent row that shows its state reads, for example, `idle · muted`. `agent_status` still reports `blocked` when it is. Mute is the pane token `mark_muted`, so a script can set it with `herdr pane report-metadata <pane> --source herdr:marks --token mark_muted=1 --clear-token mark_unread` and clear it with `--clear-token mark_muted`. It stays until it's cleared, across restarts.
+
 ### Prompting an agent
 
 `herdr agent prompt <target> <text>` (`agent.prompt`) types the text into the agent's pane, as a bracketed paste when the agent has turned paste mode on, waits 300 ms and presses Enter. What follows depends on the agent's state:
