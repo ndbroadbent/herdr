@@ -290,13 +290,32 @@ fn tab_command() -> Command {
         )
         .subcommand(
             Command::new("create")
-                .about("Create a tab")
+                .about("Create a tab, optionally starting an agent in it")
+                .override_usage("herdr tab create [OPTIONS] [--agent <KIND> [--timeout <MS>] [-- [AGENT_ARG]...]]")
                 .arg(option("workspace", "WORKSPACE_ID"))
                 .arg(path_option("cwd", "PATH"))
                 .arg(option("label", "TEXT"))
                 .arg(env_option())
                 .arg(flag("focus"))
-                .arg(flag("no-focus")),
+                .arg(flag("no-focus"))
+                .arg(
+                    option("agent", "KIND")
+                        .value_parser(agent_kind_values())
+                        .help("Start this agent in the tab and wait until it is ready for input"),
+                )
+                .arg(
+                    option("timeout", "MS")
+                        .requires("agent")
+                        .help("With --agent: wait this long for readiness (default: 30000; max: 300000)"),
+                )
+                .arg(
+                    Arg::new("agent_args")
+                        .value_name("AGENT_ARG")
+                        .num_args(0..)
+                        .last(true)
+                        .requires("agent")
+                        .help("With --agent: arguments passed to the agent"),
+                ),
         )
         .subcommand(id_command("get", "tab_id", "Show a tab"))
         .subcommand(id_command("focus", "tab_id", "Focus a tab"))

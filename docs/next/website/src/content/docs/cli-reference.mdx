@@ -194,6 +194,7 @@ Git rejects repositories owned by another user by default. If you have independe
 ```bash
 herdr tab list [--workspace <workspace_id>]
 herdr tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]
+herdr tab create ... --agent <kind> [--timeout MS] [-- <agent-args...>]
 herdr tab get <tab_id>
 herdr tab focus <tab_id>
 herdr tab rename <tab_id> <label>
@@ -203,6 +204,46 @@ herdr tab close <tab_id>
 A tab is another terminal layout inside a workspace. Without `--workspace`, `tab create` uses the active workspace and fails if none exists. Its JSON response exposes `.result.tab.tab_id` and `.result.root_pane.pane_id`. Closing a workspace's last tab also closes the workspace, matching the TUI close-tab action. If `confirm_close` is enabled and closing the tab would also close a whole worktree group, `tab close` returns a `confirmation_required` error instead.
 
 With `ui.confirm_close` enabled, the TUI asks for confirmation before closing a workspace's last tab or its only pane from a keybinding or the tab/pane menu. Ordinary pane closes and CLI/API closes remain immediate.
+
+### Creating a tab with an agent
+
+`--agent <kind>` starts an agent in the new tab and answers once it's ready for input, so one command creates a tab and starts or resumes a session. Arguments after `--` go to the agent:
+
+```bash
+# A new Claude session
+herdr tab create --label "esign cert" --cwd ~/code/app --agent claude -- \
+  --dangerously-skip-permissions --name "esign cert"
+# Resume one
+herdr tab create --label "esign cert" --cwd ~/code/app --agent claude -- \
+  --dangerously-skip-permissions --name "esign cert" --resume <session-id>
+```
+
+The agent gets a name made from the label, since agent names can't hold spaces or capitals: `esign cert` becomes `esign-cert`, with `-2`, `-3` and so on when the name is taken. The label works as an agent target too. The command answers when the agent's own screen shows it idle, not just its window title, which an agent can set before it takes input. `--timeout` defaults to 30000 ms (maximum 300000).
+
+On success the response is the `tab create` response with the agent added:
+
+```json
+{"id":"cli:tab:create","result":{"type":"tab_created",
+  "tab":{"tab_id":"w1:t8","label":"esign cert",...},
+  "root_pane":{"pane_id":"w1:p8",...},
+  "agent":{"name":"esign-cert","agent":"claude","agent_status":"idle","interactive_ready":true,
+    "agent_session":{"agent":"claude","kind":"id","value":"cd8f6f34-..."},"pane_id":"w1:p8","tab_id":"w1:t8",...}}}
+```
+
+A failure is an error on stderr, with exit status 1. Each error names the tab and pane, and says whether the tab was closed:
+
+| `error.code` | When | The tab |
+|---|---|---|
+| `agent_startup_screen` | The agent stopped at a screen a person has to answer. `error.screen` names it: `trust` (the folder trust prompt), `bypass_permissions` (the bypass permissions warning), `resume_from_summary` (resuming a large or old session) or `unknown`. herdr never answers it | Left open |
+| `agent_start_failed` | The agent exited before it was ready, for example `--resume` with an unknown session ID. `error.output` holds the pane's last lines | Closed |
+| `timeout` | The agent wasn't ready in time. It may still be starting | Left open |
+| Any `agent start` error | For example `agent_pane_busy` or `invalid_agent_argument` | Closed |
+
+```json
+{"id":"cli:tab:create","error":{"code":"agent_startup_screen","screen":"trust",
+  "message":"esign cert needs you in herdr: the agent stopped at the folder trust prompt while starting. The tab is left open.",
+  "tab_id":"w1:t9","pane_id":"w1:p9","tab_closed":false}}
+```
 
 Workspace and tab creation, and pane splitting, leave focus unchanged by default. `--focus` selects the new layout; `--no-focus` states the default explicitly. Without `--cwd`, new terminals follow the configured `terminal.new_cwd` policy, which follows the source pane or workspace by default. Each `--env KEY=VALUE` adds or replaces that variable in the new root shell.
 
