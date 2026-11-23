@@ -3134,6 +3134,8 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
                 data: crate::api::schema::EventData::TabClosed {
                     tab_id: closed_tab_id.clone(),
                     workspace_id: workspace_id.clone(),
+                    label: None,
+                    agents: Vec::new(),
                 },
             },
             "tab.closed",

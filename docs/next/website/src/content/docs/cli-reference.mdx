@@ -205,6 +205,8 @@ A tab is another terminal layout inside a workspace. Without `--workspace`, `tab
 
 With `ui.confirm_close` enabled, the TUI asks for confirmation before closing a workspace's last tab or its only pane from a keybinding or the tab/pane menu. Ordinary pane closes and CLI/API closes remain immediate.
 
+Workspace and tab creation, and pane splitting, leave focus unchanged by default. `--focus` selects the new layout; `--no-focus` states the default explicitly. Without `--cwd`, new terminals follow the configured `terminal.new_cwd` policy, which follows the source pane or workspace by default. Each `--env KEY=VALUE` adds or replaces that variable in the new root shell.
+
 ### Creating a tab with an agent
 
 `--agent <kind>` starts an agent in the new tab and answers once it's ready for input, so one command creates a tab and starts or resumes a session. Arguments after `--` go to the agent:
@@ -249,8 +251,6 @@ A failure is an error on stderr, with exit status 1. Each error names the tab an
   "message":"esign cert needs you in herdr: the agent stopped at the folder trust prompt while starting. The tab is left open.",
   "tab_id":"w1:t9","pane_id":"w1:p9","tab_closed":false}}
 ```
-
-Workspace and tab creation, and pane splitting, leave focus unchanged by default. `--focus` selects the new layout; `--no-focus` states the default explicitly. Without `--cwd`, new terminals follow the configured `terminal.new_cwd` policy, which follows the source pane or workspace by default. Each `--env KEY=VALUE` adds or replaces that variable in the new root shell.
 
 ## Panes
 

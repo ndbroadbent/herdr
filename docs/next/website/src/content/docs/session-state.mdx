@@ -134,3 +134,32 @@ herdr --remote workbox --handoff
 Plain `herdr update` installs the new client and keeps endpoint-generation-1 servers running. Plain `herdr --remote workbox` also keeps a compatible remote server running across version differences. A stop is required only for the one-time upgrade from a pre-generation-1 server; use `--handoff` when you explicitly want to replace a supported running server without losing its pane processes.
 
 `herdr update --handoff` only applies to installs managed by Herdr's own updater. Homebrew, mise, and Nix installs are updated through their package managers, so `herdr update` is disabled there and cannot perform live handoff.
+
+## Close events
+
+Two events tell a subscriber that a session has ended. Both carry the agent's session ID, so the session can be resumed or archived:
+
+- `tab.closed` fires when a tab closes: a person closes it in the TUI or with `herdr tab close`, a layout replaces it, or the last process in it exits. `label` is the tab's label. `agents` lists the agents that were running in its panes, each with `pane_id`, `agent`, `name` and `agent_session`. `agents` is empty when no agent was running, and when the tab closed because its last pane moved to another tab.
+- `pane.agent_exited` fires when an agent's process exits. `pane_exited` is `false` when the agent exited back to the pane's shell and the pane stays. It's `true` when the pane's own process exited as well; `pane.exited` follows, and `tab.closed` too when that was the tab's last pane. The event carries `pane_id`, `workspace_id`, `tab_id`, `tab_label`, `agent`, `name`, `agent_session` and `final_status`.
+
+```json
+{"event":"pane_agent_exited","data":{"type":"pane_agent_exited","pane_id":"w1:p3","workspace_id":"w1",
+  "tab_id":"w1:t3","tab_label":"esign cert","agent":"claude","name":"esign-cert","final_status":"idle",
+  "agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"efc5a9fd-..."},"pane_exited":false}}
+{"event":"tab_closed","data":{"type":"tab_closed","tab_id":"w1:t4","workspace_id":"w1","label":"billing fix",
+  "agents":[{"pane_id":"w1:p4","agent":"claude","name":"billing-fix",
+    "agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"5735ba01-..."}}]}}
+```
+
+Subscribe to them with `{"type":"tab.closed"}` and `{"type":"pane.agent_exited"}` in `events.subscribe`. `agent_session` is missing when the agent never reported a session, and `name` when it had no herdr name.
+
+Neither event fires when processes end because herdr itself is stopping:
+
+| Case | The processes | Events |
+| --- | --- | --- |
+| `herdr server stop`, `herdr restart --fresh` | End, and come back from the saved session at the next start | None. Subscriptions end when the server stops |
+| `herdr restart` (live handoff) | Keep running in the new server | None. Subscriptions end; subscribe again to the new server |
+| The machine sleeps | Pause, and carry on when it wakes | None |
+| The machine shuts down or logs out | End | None once herdr knows: on Linux with systemd-logind it hears the shutdown warning first; on macOS and elsewhere it stops when it receives `SIGTERM`, so a process that exits before then is still reported |
+
+A tab or agent that closes after a restart, because its process exited or a person closed it, fires the events as usual.

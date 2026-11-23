@@ -211,6 +211,9 @@ pub struct PaneStateUpdate {
     pub agent_name_changed: bool,
     pub agent_released: bool,
     pub agent_release_status: Option<crate::api::schema::AgentStatus>,
+    /// The released agent's herdr name and session, read before the release cleared them.
+    pub released_agent_name: Option<String>,
+    pub released_agent_session: Option<crate::api::schema::AgentSessionInfo>,
     pub suppress_completion: bool,
 }
 
@@ -403,6 +406,8 @@ impl AppState {
                     agent_name_changed: false,
                     agent_released: false,
                     agent_release_status: None,
+                    released_agent_name: None,
+                    released_agent_session: None,
                     suppress_completion: false,
                 };
                 Some(update)
@@ -1795,9 +1800,13 @@ impl AppState {
             unchanged_change,
             suppress_acquisition_completion,
             completion_reset,
+            previous_agent_name,
+            previous_agent_session,
         ) = {
             let terminal = self.terminals.get_mut(&terminal_id)?;
             let previous_agent_name = terminal.agent_name.clone();
+            let previous_agent_session =
+                crate::app::creation::terminal_agent_session_info(terminal);
             let had_completion = terminal.last_agent_completion_seq.is_some() || !previous_seen;
             let resume_revision = terminal.reported_resume_revision();
             let mutation = update(terminal);
@@ -1829,6 +1838,8 @@ impl AppState {
                 unchanged_change,
                 suppress_acquisition_completion,
                 completion_reset,
+                previous_agent_name,
+                previous_agent_session,
             )
         };
         if completion_reset {
@@ -1902,6 +1913,8 @@ impl AppState {
             agent_name_changed,
             agent_released,
             agent_release_status: agent_released.then(|| pane_agent_status(change.state, seen)),
+            released_agent_name: previous_agent_name.filter(|_| agent_released),
+            released_agent_session: previous_agent_session.filter(|_| agent_released),
             suppress_completion,
         };
         Some(update)

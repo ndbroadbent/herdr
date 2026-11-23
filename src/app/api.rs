@@ -206,6 +206,15 @@ impl App {
             return self.handle_api_worktree_remove_finished(*result);
         }
 
+        // A tab can close because its last pane's process exited. Read what `tab.closed`
+        // reports before the exit clears the agents.
+        let dying_pane_tab = match &ev {
+            AppEvent::PaneDied { pane_id, .. } if !self.stopping && !self.state.should_quit => {
+                self.dying_pane_tab(*pane_id)
+            }
+            _ => None,
+        };
+
         let mut worktree_restore_updates = Vec::new();
         if let AppEvent::PaneDied { pane_id, .. } = &ev {
             if self
@@ -254,7 +263,7 @@ impl App {
                 {
                     self.sync_full_lifecycle_authority_detection_pauses();
                     self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
-                    self.emit_pane_state_update(&update);
+                    self.emit_pane_state_update_with_exit(&update, true);
                 }
                 if self.runtime_exit_action(*pane_id) == RuntimeExitAction::RespawnShell
                     && self.respawn_shell_for_launch_pane(*pane_id, true)
@@ -352,6 +361,9 @@ impl App {
         let terminal_cwd_reported = matches!(ev, AppEvent::TerminalCwdReported { .. });
         let previous_toast = self.state.toast.clone();
         let mut pane_updates = self.state.handle_app_event(ev);
+        if let Some(closing) = dying_pane_tab {
+            self.emit_tab_closed_by_pane_exit(closing);
+        }
         if update_ready.is_some() {
             self.state.latest_release_notes = crate::release_notes::load_latest();
         }
@@ -704,7 +716,89 @@ impl App {
         )
     }
 
+    /// The label of a tab that's about to close, and the agents running in its panes, which
+    /// close with it. Read before the tab closes, for `tab.closed`.
+    pub(crate) fn closing_tab_details(
+        &self,
+        ws_idx: usize,
+        tab_idx: usize,
+    ) -> (Option<String>, Vec<crate::api::schema::ClosedAgentInfo>) {
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return (None, Vec::new());
+        };
+        let Some(tab) = ws.tabs.get(tab_idx) else {
+            return (None, Vec::new());
+        };
+        let agents = tab
+            .layout
+            .pane_ids()
+            .into_iter()
+            .filter_map(|pane_id| self.agent_info(ws_idx, pane_id))
+            .map(|info| crate::api::schema::ClosedAgentInfo {
+                pane_id: info.pane_id,
+                agent: info.agent,
+                name: info.name,
+                agent_session: info.agent_session,
+            })
+            .collect();
+        (ws.tab_display_name(tab_idx), agents)
+    }
+
+    fn dying_pane_tab(&self, pane_id: crate::layout::PaneId) -> Option<DyingPaneTab> {
+        let (ws_idx, _) = self.find_pane(pane_id)?;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+        let (label, agents) = self.closing_tab_details(ws_idx, tab_idx);
+        Some(DyingPaneTab {
+            tab_id: self.public_tab_id(ws_idx, tab_idx)?,
+            workspace_id: self.public_workspace_id(ws_idx),
+            workspace: (ws.tabs.len() <= 1).then(|| self.workspace_info(ws_idx)),
+            label,
+            agents,
+        })
+    }
+
+    /// Reports the tab, and its workspace, as closed when the pane's exit removed them.
+    fn emit_tab_closed_by_pane_exit(&mut self, closing: DyingPaneTab) {
+        if self.parse_tab_id(&closing.tab_id).is_some() {
+            return;
+        }
+        let workspace_closed = !self
+            .state
+            .workspaces
+            .iter()
+            .enumerate()
+            .any(|(ws_idx, _)| self.public_workspace_id(ws_idx) == closing.workspace_id);
+        self.emit_event(crate::api::schema::EventEnvelope {
+            event: crate::api::schema::EventKind::TabClosed,
+            data: crate::api::schema::EventData::TabClosed {
+                tab_id: closing.tab_id,
+                workspace_id: closing.workspace_id.clone(),
+                label: closing.label,
+                agents: closing.agents,
+            },
+        });
+        if workspace_closed {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::WorkspaceClosed,
+                data: crate::api::schema::EventData::WorkspaceClosed {
+                    workspace_id: closing.workspace_id,
+                    workspace: closing.workspace,
+                },
+            });
+        }
+    }
+
     pub(crate) fn emit_pane_state_update(&mut self, update: &crate::app::actions::PaneStateUpdate) {
+        self.emit_pane_state_update_with_exit(update, false);
+    }
+
+    /// `pane_exited` is true when the update comes from the pane's own process exiting.
+    pub(crate) fn emit_pane_state_update_with_exit(
+        &mut self,
+        update: &crate::app::actions::PaneStateUpdate,
+        pane_exited: bool,
+    ) {
         let Some(pane_id) = self.public_pane_id(update.ws_idx, update.pane_id) else {
             return;
         };
@@ -726,6 +820,23 @@ impl App {
                     agent: update.agent_label.clone(),
                     released: update.agent_released,
                     final_status: update.agent_release_status,
+                },
+            });
+        }
+
+        if update.agent_released && !self.stopping && !self.state.should_quit {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PaneAgentExited,
+                data: crate::api::schema::EventData::PaneAgentExited {
+                    pane_id: pane_id.clone(),
+                    workspace_id: workspace_id.clone(),
+                    tab_id: tab_id.clone(),
+                    tab_label: tab_label.clone(),
+                    agent: update.agent_label.clone(),
+                    name: update.released_agent_name.clone(),
+                    agent_session: update.released_agent_session.clone(),
+                    final_status: update.agent_release_status,
+                    pane_exited,
                 },
             });
         }
@@ -1421,6 +1532,15 @@ pub(super) mod test_support {
             runtime.shutdown();
         }
     }
+}
+
+/// What `tab.closed` reports about the tab of a pane whose process is exiting.
+struct DyingPaneTab {
+    tab_id: String,
+    workspace_id: String,
+    workspace: Option<crate::api::schema::WorkspaceInfo>,
+    label: Option<String>,
+    agents: Vec<crate::api::schema::ClosedAgentInfo>,
 }
 
 #[cfg(test)]
@@ -2157,6 +2277,197 @@ mod tests {
                 }
             )));
         }
+    }
+
+    /// An app whose only pane runs a Codex session `s-1` named `reviewer`.
+    fn app_with_codex_session(name: &str) -> (App, crate::api::EventHub, crate::layout::PaneId) {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        let workspace = crate::workspace::Workspace::test_new(name);
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        terminal
+            .set_hook_authority_at(
+                "herdr:codex".into(),
+                "codex".into(),
+                AgentState::Idle,
+                None,
+                Some(crate::agent_resume::AgentSessionRef {
+                    kind: crate::agent_resume::AgentSessionRefKind::Id,
+                    value: "s-1".into(),
+                }),
+                Some(1),
+                std::time::Instant::now(),
+            )
+            .unwrap();
+        terminal.set_agent_name("reviewer".into());
+        (app, event_hub, pane_id)
+    }
+
+    fn agent_exited_events(event_hub: &crate::api::EventHub) -> Vec<crate::api::schema::EventData> {
+        event_hub
+            .events_after(0)
+            .into_iter()
+            .filter(|(_, event)| event.event == crate::api::schema::EventKind::PaneAgentExited)
+            .map(|(_, event)| event.data)
+            .collect()
+    }
+
+    #[test]
+    fn an_agent_exiting_reports_its_session_unless_the_server_is_stopping() {
+        for stopping in [false, true] {
+            let (mut app, event_hub, pane_id) = app_with_codex_session("agent-exit");
+            app.stopping = stopping;
+
+            app.handle_internal_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Codex),
+                state: AgentState::Idle,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: true,
+                observed_at: std::time::Instant::now(),
+            });
+
+            let events = agent_exited_events(&event_hub);
+            if stopping {
+                assert!(events.is_empty(), "{events:?}");
+                continue;
+            }
+            let [crate::api::schema::EventData::PaneAgentExited {
+                tab_label,
+                agent,
+                name,
+                agent_session,
+                pane_exited,
+                ..
+            }] = events.as_slice()
+            else {
+                panic!("expected one pane.agent_exited event, got {events:?}");
+            };
+            assert_eq!(tab_label.as_deref(), Some("1"));
+            assert_eq!(agent.as_deref(), Some("codex"));
+            assert_eq!(name.as_deref(), Some("reviewer"));
+            assert_eq!(
+                agent_session.as_ref().map(|session| session.value.as_str()),
+                Some("s-1")
+            );
+            assert!(!pane_exited);
+        }
+    }
+
+    #[test]
+    fn a_tab_closed_by_its_last_pane_exiting_reports_its_agents_unless_stopping() {
+        for stopping in [false, true] {
+            let (mut app, event_hub, pane_id) = app_with_codex_session("pane-exit");
+            let tab_id = app.public_tab_id(0, 0).unwrap();
+            let workspace_id = app.public_workspace_id(0);
+            app.stopping = stopping;
+
+            app.handle_internal_event(AppEvent::PaneDied {
+                pane_id,
+                exit_reason: crate::platform::ChildExitReason::Exited,
+            });
+
+            let events = event_hub.events_after(0);
+            let closed = events
+                .iter()
+                .filter(|(_, event)| {
+                    matches!(
+                        event.event,
+                        crate::api::schema::EventKind::TabClosed
+                            | crate::api::schema::EventKind::WorkspaceClosed
+                    )
+                })
+                .map(|(_, event)| event.data.clone())
+                .collect::<Vec<_>>();
+            if stopping {
+                assert!(closed.is_empty(), "{closed:?}");
+                assert!(agent_exited_events(&event_hub).is_empty());
+                continue;
+            }
+            let [crate::api::schema::EventData::TabClosed {
+                tab_id: closed_tab_id,
+                label,
+                agents,
+                ..
+            }, crate::api::schema::EventData::WorkspaceClosed {
+                workspace_id: closed_workspace_id,
+                ..
+            }] = closed.as_slice()
+            else {
+                panic!("expected tab.closed then workspace.closed, got {closed:?}");
+            };
+            assert_eq!(closed_tab_id, &tab_id);
+            assert_eq!(closed_workspace_id, &workspace_id);
+            assert_eq!(label.as_deref(), Some("1"));
+            assert_eq!(agents.len(), 1);
+            assert_eq!(agents[0].name.as_deref(), Some("reviewer"));
+            assert_eq!(
+                agents[0]
+                    .agent_session
+                    .as_ref()
+                    .map(|session| session.value.as_str()),
+                Some("s-1")
+            );
+            assert!(matches!(
+                agent_exited_events(&event_hub).as_slice(),
+                [crate::api::schema::EventData::PaneAgentExited {
+                    pane_exited: true,
+                    ..
+                }]
+            ));
+        }
+    }
+
+    #[test]
+    fn closing_a_tab_reports_its_label_and_agents() {
+        let (mut app, event_hub, _) = app_with_codex_session("tab-close");
+        app.state.workspaces[0].tabs[0].custom_name = Some("email triage".into());
+        let tab_id = app.public_tab_id(0, 0).unwrap();
+
+        app.handle_tab_close(
+            "req".into(),
+            crate::api::schema::TabTarget {
+                tab_id: tab_id.clone(),
+            },
+        );
+
+        let closed = event_hub
+            .events_after(0)
+            .into_iter()
+            .find(|(_, event)| event.event == crate::api::schema::EventKind::TabClosed)
+            .map(|(_, event)| event.data)
+            .expect("tab.closed should be emitted");
+        let crate::api::schema::EventData::TabClosed {
+            tab_id: closed_tab_id,
+            label,
+            agents,
+            ..
+        } = closed
+        else {
+            panic!("expected tab.closed");
+        };
+        assert_eq!(closed_tab_id, tab_id);
+        assert_eq!(label.as_deref(), Some("email triage"));
+        assert_eq!(
+            agents
+                .iter()
+                .map(|agent| agent.agent_session.as_ref().map(|s| s.value.as_str()))
+                .collect::<Vec<_>>(),
+            [Some("s-1")]
+        );
     }
 
     #[test]

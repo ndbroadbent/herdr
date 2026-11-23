@@ -100,6 +100,7 @@ impl App {
             EventData::TabClosed {
                 tab_id,
                 workspace_id,
+                ..
             } => {
                 let mut context = empty_plugin_context(correlation_id);
                 context.workspace_id = Some(workspace_id.clone());
@@ -168,6 +169,11 @@ impl App {
                 workspace_id,
             }
             | EventData::PaneAgentDetected {
+                pane_id,
+                workspace_id,
+                ..
+            }
+            | EventData::PaneAgentExited {
                 pane_id,
                 workspace_id,
                 ..

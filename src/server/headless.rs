@@ -643,6 +643,7 @@ impl HeadlessServer {
             };
 
             if self.should_quit.load(Ordering::Acquire) || self.host_shutdown_requested() {
+                self.app.stopping = true;
                 match event {
                     LoopEvent::Internal(ev) => {
                         self.handle_internal_event_with_forwarding(ev);

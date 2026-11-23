@@ -198,6 +198,10 @@ herdr tab close <tab_id>
 
 创建工作区、标签页和拆分窗格默认不改变焦点。`--focus` 选择新布局;`--no-focus` 显式表达默认行为。不指定 `--cwd` 时,新终端遵循 `terminal.new_cwd` 设置,默认跟随来源窗格或工作区。每个 `--env KEY=VALUE` 在新的根 shell 中添加或替换一个环境变量。
 
+### 创建带智能体的标签页
+
+`herdr tab create --agent <kind>` 会在新标签页中启动智能体，并在它可以接受输入后再返回。详细说明、响应格式和错误码请参阅英文文档。
+
 ## 窗格
 
 ```bash

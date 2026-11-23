@@ -171,6 +171,7 @@ impl App {
                 .state
                 .terminal_ids_for_tab(target_ws_idx, target_tab_idx);
             let plugin_pane_ids = self.state.pane_ids_for_tab(target_ws_idx, target_tab_idx);
+            let (label, agents) = self.closing_tab_details(target_ws_idx, target_tab_idx);
             let Some(ws) = self.state.workspaces.get_mut(target_ws_idx) else {
                 return encode_error(id, "tab_not_found", "tab not found");
             };
@@ -183,6 +184,8 @@ impl App {
                     data: EventData::TabClosed {
                         tab_id: closed_tab_id,
                         workspace_id: self.public_workspace_id(target_ws_idx),
+                        label,
+                        agents,
                     },
                 });
             }

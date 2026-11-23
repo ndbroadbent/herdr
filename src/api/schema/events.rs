@@ -62,6 +62,8 @@ pub enum Subscription {
     PaneExited {},
     #[serde(rename = "pane.agent_detected")]
     PaneAgentDetected {},
+    #[serde(rename = "pane.agent_exited")]
+    PaneAgentExited {},
     #[serde(rename = "pane.output_matched")]
     PaneOutputMatched {
         pane_id: String,
@@ -216,6 +218,7 @@ pub enum EventKind {
     PaneOutputChanged,
     PaneExited,
     PaneAgentDetected,
+    PaneAgentExited,
     PaneAgentStatusChanged,
     LayoutUpdated,
 }
@@ -247,6 +250,7 @@ impl EventKind {
             EventKind::PaneOutputChanged => "pane.output_changed",
             EventKind::PaneExited => "pane.exited",
             EventKind::PaneAgentDetected => "pane.agent_detected",
+            EventKind::PaneAgentExited => "pane.agent_exited",
             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
             EventKind::LayoutUpdated => "layout.updated",
         }
@@ -279,6 +283,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::PaneOutputChanged,
     EventKind::PaneExited,
     EventKind::PaneAgentDetected,
+    EventKind::PaneAgentExited,
     EventKind::PaneAgentStatusChanged,
     EventKind::LayoutUpdated,
 ];
@@ -356,6 +361,18 @@ mod known_event_name_tests {
         assert!(!names.contains(&"pane.updated"));
         assert!(names.contains(&"pane.moved"));
     }
+}
+
+/// An agent that closed with its tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClosedAgentInfo {
+    pub pane_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<super::agents::AgentSessionInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -478,6 +495,13 @@ pub enum EventData {
     TabClosed {
         tab_id: String,
         workspace_id: String,
+        /// The tab's label when it closed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        /// The agents that were running in the tab's panes, which closed with it. Empty when
+        /// the tab closed because its last pane moved to another tab.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents: Vec<ClosedAgentInfo>,
     },
     TabRenamed {
         tab_id: String,
@@ -544,6 +568,28 @@ pub enum EventData {
         released: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         final_status: Option<AgentStatus>,
+    },
+    /// An agent's process exited. Never sent while the server stops, hands off to a new server,
+    /// or the machine shuts down.
+    PaneAgentExited {
+        pane_id: String,
+        workspace_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// The agent's herdr name, when it had one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session: Option<super::agents::AgentSessionInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        final_status: Option<AgentStatus>,
+        /// True when the pane's own process exited too, so the pane closes. False when the
+        /// agent exited back to the pane's shell and the pane stays.
+        pane_exited: bool,
     },
     PaneAgentStatusChanged {
         pane_id: String,

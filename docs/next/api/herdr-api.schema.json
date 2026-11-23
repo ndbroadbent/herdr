@@ -79,6 +79,40 @@
           ],
           "type": "string"
         },
+        "ClosedAgentInfo": {
+          "description": "An agent that closed with its tab.",
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/AgentSessionInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "EventData": {
           "oneOf": [
             {
@@ -348,6 +382,20 @@
             },
             {
               "properties": {
+                "agents": {
+                  "description": "The agents that were running in the tab's panes, which closed with it. Empty when\nthe tab closed because its last pane moved to another tab.",
+                  "items": {
+                    "$ref": "#/schemas/event/$defs/ClosedAgentInfo"
+                  },
+                  "type": "array"
+                },
+                "label": {
+                  "description": "The tab's label when it closed.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "tab_id": {
                   "type": "string"
                 },
@@ -673,6 +721,77 @@
               "type": "object"
             },
             {
+              "description": "An agent's process exited. Never sent while the server stops, hands off to a new server,\nor the machine shuts down.",
+              "properties": {
+                "agent": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "agent_session": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/event/$defs/AgentSessionInfo"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "final_status": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/event/$defs/AgentStatus"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "description": "The agent's herdr name, when it had one.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pane_exited": {
+                  "description": "True when the pane's own process exited too, so the pane closes. False when the\nagent exited back to the pane's shell and the pane stays.",
+                  "type": "boolean"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "pane_agent_exited",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "workspace_id",
+                "pane_exited"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "agent": {
                   "type": [
@@ -776,6 +895,7 @@
             "pane_output_changed",
             "pane_exited",
             "pane_agent_detected",
+            "pane_agent_exited",
             "pane_agent_status_changed",
             "layout_updated"
           ],
@@ -4211,6 +4331,18 @@
             },
             {
               "properties": {
+                "type": {
+                  "const": "pane.agent_exited",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "lines": {
                   "format": "uint32",
                   "minimum": 0,
@@ -6843,6 +6975,40 @@
           ],
           "type": "string"
         },
+        "ClosedAgentInfo": {
+          "description": "An agent that closed with its tab.",
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/AgentSessionInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "ConfigReloadStatus": {
           "enum": [
             "applied",
@@ -7120,6 +7286,20 @@
             },
             {
               "properties": {
+                "agents": {
+                  "description": "The agents that were running in the tab's panes, which closed with it. Empty when\nthe tab closed because its last pane moved to another tab.",
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/ClosedAgentInfo"
+                  },
+                  "type": "array"
+                },
+                "label": {
+                  "description": "The tab's label when it closed.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "tab_id": {
                   "type": "string"
                 },
@@ -7445,6 +7625,77 @@
               "type": "object"
             },
             {
+              "description": "An agent's process exited. Never sent while the server stops, hands off to a new server,\nor the machine shuts down.",
+              "properties": {
+                "agent": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "agent_session": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/success_response/$defs/AgentSessionInfo"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "final_status": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/success_response/$defs/AgentStatus"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "description": "The agent's herdr name, when it had one.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pane_exited": {
+                  "description": "True when the pane's own process exited too, so the pane closes. False when the\nagent exited back to the pane's shell and the pane stays.",
+                  "type": "boolean"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "tab_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tab_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "pane_agent_exited",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "workspace_id",
+                "pane_exited"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "agent": {
                   "type": [
@@ -7563,6 +7814,7 @@
             "pane_output_changed",
             "pane_exited",
             "pane_agent_detected",
+            "pane_agent_exited",
             "pane_agent_status_changed",
             "layout_updated"
           ],

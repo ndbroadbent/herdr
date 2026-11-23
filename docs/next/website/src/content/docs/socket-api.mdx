@@ -822,10 +822,15 @@ Workspace event subscriptions include `workspace.created`, `workspace.updated`, 
 Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
 `tab.renamed`, and `tab.moved`. `tab.moved` includes the moved `tab_id`,
 `workspace_id`, requested `insert_index`, and updated ordered `tabs` list for
-that workspace.
+that workspace. `tab.closed` includes the tab's `label` and the `agents` that
+closed with it, each with its `agent_session`.
 Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
-`pane.moved`, `pane.exited`, `pane.agent_detected`,
+`pane.moved`, `pane.exited`, `pane.agent_detected`, `pane.agent_exited`,
 `pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
+`pane.agent_exited` reports an agent's process exiting, with its `agent_session`
+and whether the pane's own process exited too (`pane_exited`). Neither it nor
+`tab.closed` fires while the server stops or hands off to a new one; see
+[Session state](/docs/session-state/#close-events).
 `pane.focused` also reports manual pane selection changes from any client attached
 to this server. It does not move other clients' views, and its payload does not
 identify the client. Selecting an already-selected pane does not emit it again.

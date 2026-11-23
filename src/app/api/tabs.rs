@@ -225,6 +225,7 @@ impl App {
             return tab_not_found(id, &target.tab_id);
         };
         let closes_workspace = ws.tabs.len() <= 1;
+        let (label, agents) = self.closing_tab_details(ws_idx, tab_idx);
         let terminal_ids = self.state.terminal_ids_for_tab(ws_idx, tab_idx);
         let pane_ids = ws
             .tabs
@@ -256,6 +257,8 @@ impl App {
                 data: EventData::TabClosed {
                     tab_id,
                     workspace_id: workspace_id.clone(),
+                    label,
+                    agents,
                 },
             });
             self.emit_event(EventEnvelope {
@@ -287,6 +290,8 @@ impl App {
             data: EventData::TabClosed {
                 tab_id,
                 workspace_id,
+                label,
+                agents,
             },
         });
 
@@ -369,6 +374,7 @@ mod tests {
             EventData::TabClosed {
                 tab_id: closed_tab_id,
                 workspace_id: closed_workspace_id,
+                ..
             } if closed_tab_id == &tab_id && closed_workspace_id == &workspace_id
         ));
         assert!(matches!(

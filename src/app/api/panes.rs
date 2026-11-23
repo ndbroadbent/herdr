@@ -1316,9 +1316,12 @@ impl App {
         if let Some(closed_tab_id) = &source_removed_tab_id {
             self.emit_event(EventEnvelope {
                 event: EventKind::TabClosed,
+                // The pane moved to another tab, so no agent closed with this one.
                 data: EventData::TabClosed {
                     tab_id: closed_tab_id.clone(),
                     workspace_id: previous_workspace_id.clone(),
+                    label: None,
+                    agents: Vec::new(),
                 },
             });
         }
