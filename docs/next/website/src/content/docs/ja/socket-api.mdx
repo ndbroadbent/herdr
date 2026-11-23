@@ -758,11 +758,31 @@ herdr agent wait w1:p1 --until blocked
 {
   "id": "req_1",
   "error": {
-    "code": "not_found",
+    "code": "pane_not_found",
     "message": "pane not found"
   }
 }
 ```
+
+## クライアント向けの契約
+
+ダッシュボードやボットなど、長く動き続けるクライアントが頼れる契約です。詳しくは英語版のドキュメントを参照してください。
+
+### イベントの購読
+
+`events.subscribe` の購読の種類、イベントの形式、順序、再接続の方法は英語版を参照してください。
+
+### エージェントの状態の値
+
+`agent_status` は `idle`、`done`、`working`、`blocked`、`unknown` のいずれかです。詳しくは英語版を参照してください。
+
+### エージェントへのプロンプト送信
+
+`agent prompt` がエージェントの状態ごとに何をするかは英語版を参照してください。`blocked` のエージェントには何も送信せず `agent_blocked` を返します。
+
+### エラーコード
+
+エラーコードの一覧は英語版を参照してください。`message` ではなく `code` で判定してください。
 
 ## プロトコルの安定性
 

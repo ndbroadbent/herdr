@@ -752,11 +752,31 @@ herdr agent wait w1:p1 --until blocked
 {
   "id": "req_1",
   "error": {
-    "code": "not_found",
+    "code": "pane_not_found",
     "message": "pane not found"
   }
 }
 ```
+
+## 客户端约定
+
+仪表盘、机器人等长期运行的客户端可以依赖的约定。详情请参阅英文文档。
+
+### 订阅事件
+
+`events.subscribe` 的订阅类型、事件格式、顺序和重新连接方法请参阅英文文档。
+
+### 智能体状态值
+
+`agent_status` 的取值为 `idle`、`done`、`working`、`blocked` 或 `unknown`。详情请参阅英文文档。
+
+### 向智能体发送提示
+
+`agent prompt` 在智能体各个状态下的行为请参阅英文文档。智能体处于 `blocked` 时不会发送任何内容，并返回 `agent_blocked`。
+
+### 错误码
+
+完整的错误码列表请参阅英文文档。请按 `code` 判断，不要依赖 `message`。
 
 ## 协议稳定性
 

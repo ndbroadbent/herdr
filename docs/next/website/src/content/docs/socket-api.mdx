@@ -832,6 +832,8 @@ closed with it, each with its `agent_session`.
 Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
 `pane.moved`, `pane.exited`, `pane.agent_detected`, `pane.agent_exited`,
 `pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
+`pane.agent_status_changed` without a `pane_id` reports every pane's agent
+status changes, so a dashboard needs one entry for all its agents.
 `pane.agent_exited` reports an agent's process exiting, with its `agent_session`
 and whether the pane's own process exited too (`pane_exited`). Neither it nor
 `tab.closed` fires while the server stops or hands off to a new one; see
@@ -945,11 +947,84 @@ Errors look like this:
 {
   "id": "req_1",
   "error": {
-    "code": "not_found",
+    "code": "pane_not_found",
     "message": "pane not found"
   }
 }
 ```
+
+## Client contract
+
+A long-lived client, such as a dashboard, a bot or another agent, can rely on what this section describes. Herdr adds fields to responses and events but doesn't remove or rename them. New event types, `agent_status` values and error codes can appear, so ignore ones you don't know.
+
+### Subscribing to events
+
+Open a connection to the socket and send one `events.subscribe` request. The first line back is `{"id":"<your id>","result":{"type":"subscription_started"}}`, and every later line is an event. A subscription connection carries nothing else, so use another connection for requests.
+
+Each entry in `subscriptions` has a `type`:
+
+| `type` | Parameters | Reports |
+| --- | --- | --- |
+| `workspace.created`, `workspace.updated`, `workspace.metadata_updated`, `workspace.renamed`, `workspace.moved`, `workspace.reordered`, `workspace.closed`, `workspace.focused`, `worktree.created`, `worktree.opened`, `worktree.removed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `tab.moved`, `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`, `pane.moved`, `pane.exited`, `pane.agent_detected`, `pane.agent_exited`, `layout.updated` | None | Lifecycle events from the event history, from when the request was accepted |
+| `pane.agent_status_changed` | `pane_id` (optional), `agent_status` (optional filter) | Agent status changes. Without `pane_id`, every pane's changes from the event history. With `pane_id`, one pane, which must exist; if its current status already matches `agent_status`, the first event reports it, and the subscription samples the pane's status when no event arrives |
+| `pane.output_matched` | `pane_id`, `source`, `lines`, `match`, `strip_ansi` | A sampled read of the pane when its text matches |
+| `pane.scroll_changed` | `pane_id` | A sampled read of the pane's scroll position when it changes |
+
+The two kinds of event have different envelopes. A lifecycle event names its type in snake case, both in `event` and in `data.type`, while the subscription `type` uses dots: subscribe to `tab.closed`, receive `"event":"tab_closed"`. The three subscriptions with parameters send the dotted name in `event` and no `data.type`:
+
+```json
+{"event":"tab_closed","data":{"type":"tab_closed","tab_id":"w1:t4","workspace_id":"w1","label":"billing fix"}}
+{"event":"pane.agent_status_changed","data":{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t3","tab_label":"esign cert","agent_status":"done","agent":"claude"}}
+```
+
+Events on one connection arrive in the order they happened, and sampled reads follow the events delivered with them. Events retained before the request aren't replayed. A subscriber that falls behind the retained history gets `events_lost` and the connection closes.
+
+A subscription connection also ends when the server stops, restarts or hands off to a new server. Reconnect until the socket accepts again, subscribe again, and read current state with `session.snapshot` or `agent.list`, since events from the gap aren't replayed. Herdr doesn't report agents or tabs as closed because the server stopped; see [close events](/docs/session-state/#close-events).
+
+### Agent status values
+
+| `agent_status` | Meaning | `agent prompt` |
+| --- | --- | --- |
+| `idle` | At its prompt, waiting for input, and seen since it last finished: its tab was the active tab then or has been since | Starts a turn |
+| `done` | At its prompt after finishing a turn nobody has looked at yet: its tab wasn't the active tab when it finished. It becomes `idle` when a person opens the tab or marks the session inactive | Starts a turn |
+| `working` | Busy with a turn | Sends the prompt, and the agent queues it (see below) |
+| `blocked` | Waiting for a person: a permission or question dialog, or a start-up screen | Rejected with `agent_blocked`; nothing is sent |
+| `unknown` | Herdr can't tell yet: no agent detected, or detection is settling after a start, restart or handoff | Sent when a known agent runs in the pane's foreground, otherwise `agent_not_ready` |
+
+`idle` and `done` mean the same to the agent: both take input. An agent in a background tab, such as one started with `herdr tab create --no-focus`, finishes as `done`, so wait for both with `--until idle --until done`. There's no status for an agent that has exited: it leaves `agent.list`, and `pane.agent_exited` reports it. An unusual dialog can show as `idle` until Herdr's detection rules learn its shape, so `idle` is not a reason to approve anything.
+
+### Prompting an agent
+
+`herdr agent prompt <target> <text>` (`agent.prompt`) types the text into the agent's pane, as a bracketed paste when the agent has turned paste mode on, waits 300 ms and presses Enter. What follows depends on the agent's state:
+
+| State | What Herdr does | What the agent does |
+| --- | --- | --- |
+| `idle`, `done` | Types the text and presses Enter | Starts a turn |
+| `working` | Types the text and presses Enter | Claude Code (2.1) and Codex (0.166) queue it and give it to the model after the current step, inside the running turn. That turn may answer only the newest prompt |
+| `blocked` | Sends nothing and returns `agent_blocked` | Keeps waiting for a person. Answer the dialog with `agent send-keys` |
+| `unknown` | Types the text when a known agent is the pane's foreground process | Depends on what the screen shows |
+| Starting (`agent start` or `tab create --agent` hasn't finished) | Returns `agent_not_ready` | |
+
+It also returns `agent_not_ready` when the agent is no longer the pane's foreground process, and `empty_agent_prompt` for empty text. Success without `--wait` means the text and Enter were written, not that a turn started.
+
+With `--wait`, a prompt sent in any state but `working` has five seconds to make the agent `working` or `blocked`, or the command returns `agent_prompt_stalled`. It then waits for one of the `--until` states, by default `idle`, `done` or `blocked`. The wait doesn't follow turns: a prompt sent while the agent is `working` can be satisfied by the end of the turn already running. A `timeout` or `agent_prompt_stalled` doesn't prove the text wasn't sent, so read the agent before sending it again.
+
+### Error codes
+
+Every error has the shape `{"id":"…","error":{"code":"…","message":"…"}}`. Match on `code`: `message` is written for people and can change. The CLI prints the error as JSON on stderr and exits with status 1; a usage error exits with status 2 and no JSON.
+
+| Area | Codes |
+| --- | --- |
+| Requests and the connection | `invalid_request` (not valid JSON or not a request), `invalid_params`, `unknown_method`, `unsupported_method` (not available on this machine), `unsupported_in_app_mode`, `connection_local_only`, `protocol_mismatch`, `server_unavailable` (the server is stopping or couldn't take the request; reconnect and retry), `server_not_running` (CLI: nothing is listening on the socket), `timeout`, `internal_error`, `serialization_error`, `not_implemented` |
+| Targets | `workspace_not_found`, `tab_not_found`, `pane_not_found`, `target_pane_not_found`, `agent_not_found`, `agent_name_not_found`, `agent_target_ambiguous` (the message lists the candidates), `invalid_target`, `stale_pane_target`, `no_active_workspace`, `no_active_pane`, `split_not_found`, `layout_not_found` |
+| Agents | `agent_blocked`, `agent_not_ready`, `agent_not_running`, `agent_not_idle` (a history read needs the agent idle), `agent_prompt_stalled`, `agent_prompt_failed`, `empty_agent_prompt`, `agent_send_keys_failed`, `invalid_key`, `agent_pane_busy` (the pane isn't a free shell), `agent_pane_unavailable`, `agent_pane_not_found`, `agent_name_taken`, `invalid_agent_name`, `invalid_agent`, `unsupported_agent_kind`, `invalid_agent_argument`, `invalid_agent_timeout`, `agent_start_input_failed`, `agent_launch_pending`, `invalid_agent_view`, `agent_explain_unavailable`, `agent_explain_file_read_failed`, `resume_not_accepted`, `invalid_resume_argv` |
+| `herdr tab create --agent` (CLI) | `agent_startup_screen`, `agent_start_failed`, `timeout`, and any `agent start` error; see the [CLI reference](/docs/cli-reference/) |
+| Events | `events_lost`, `invalid_regex`, `unsupported_event_wait_match` |
+| Changing the layout | `confirmation_required` (the change would close a worktree group), `tab_create_failed`, `tab_close_failed`, `tab_move_failed`, `pane_split_failed`, `pane_move_failed`, `invalid_pane_swap`, `invalid_ratio`, `invalid_layout`, `layout_apply_failed`, `pane_layout_unavailable`, `pane_send_failed`, `pane_clear_failed`, `stale_content`, `ui_busy`, `popup_not_open`, `workspace_create_failed`, `workspace_move_failed`, `workspace_move_block_failed`, `workspace_group_close_required` |
+| Metadata | `invalid_metadata_request`, `invalid_metadata_source`, `invalid_metadata_token`, `invalid_metadata_ttl`, `invalid_state_label`, `metadata_token_limit`, `metadata_sequence_source_limit` |
+| Worktrees | `worktree_not_found`, `worktree_busy`, `worktree_create_failed`, `worktree_open_failed`, `worktree_remove_failed`, `worktree_list_failed`, `worktree_operation_in_progress`, `stale_worktree_operation`, `dirty_worktree_requires_force`, `linked_worktree_source`, `not_linked_worktree` |
+| Plugins | `plugin_not_found`, `plugin_disabled`, `plugin_manifest_unavailable`, `plugin_registry_load_failed`, `plugin_registry_save_failed`, `plugin_link_failed`, `plugin_user_dir_create_failed`, `plugin_pane_open_failed`, `plugin_pane_not_found`, `invalid_plugin_id`, `invalid_plugin_entrypoint`, `command_not_found`, `command_failed`, `command_target_mismatch` |
+| Other | `handoff_failed`, `integration_install_failed`, `integration_uninstall_failed`, `scrollback_editor_failed`, `copy_motion_unavailable`, `query_too_large`, `stale_announcement`, `stale_release_notes` |
 
 ## Protocol stability
 
