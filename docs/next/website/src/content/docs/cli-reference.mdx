@@ -216,9 +216,14 @@ herdr tab create --label "esign cert" --cwd ~/code/app --agent claude -- \
 # Resume one
 herdr tab create --label "esign cert" --cwd ~/code/app --agent claude -- \
   --dangerously-skip-permissions --name "esign cert" --resume <session-id>
+# A new Codex session, and resuming one
+herdr tab create --label "billing fix" --cwd ~/code/app --agent codex -- --no-daemon
+herdr tab create --label "billing fix" --cwd ~/code/app --agent codex -- --no-daemon resume <session-id>
 ```
 
-The agent gets a name made from the label, since agent names can't hold spaces or capitals: `esign cert` becomes `esign-cert`, with `-2`, `-3` and so on when the name is taken. The label works as an agent target too. The command answers when the agent's own screen shows it idle, not just its window title, which an agent can set before it takes input. `--timeout` defaults to 30000 ms (maximum 300000).
+The agent gets a name made from the label, since agent names can't hold spaces or capitals: `esign cert` becomes `esign-cert`, with `-2`, `-3` and so on when the name is taken. The label works as an agent target too. The command answers once the agent has looked idle for 1.5 seconds without a break, so a start-up screen drawn a moment later still counts as one. For Claude, idle means its prompt box is on the screen, not just its window title, which Claude sets before it takes input. Codex shows idle only in its window title, so for Codex the title counts. `--timeout` defaults to 30000 ms (maximum 300000).
+
+Codex reports its session ID through its hook only after the first turn. So once a Codex session is ready, herdr types `/status` into it, reads the `Session:` line, and records the ID on the pane the way Codex's hook does. `/status` runs inside Codex and uses no tokens, but its output stays in the session's scrollback. If no ID shows within 5 seconds, the command still succeeds, with `agent_session` null until the first turn. Pass `--no-daemon` to Codex: a Codex daemon started from another pane reports its sessions under that pane.
 
 On success the response is the `tab create` response with the agent added:
 
@@ -234,7 +239,7 @@ A failure is an error on stderr, with exit status 1. Each error names the tab an
 
 | `error.code` | When | The tab |
 |---|---|---|
-| `agent_startup_screen` | The agent stopped at a screen a person has to answer. `error.screen` names it: `trust` (the folder trust prompt), `bypass_permissions` (the bypass permissions warning), `resume_from_summary` (resuming a large or old session) or `unknown`. herdr never answers it | Left open |
+| `agent_startup_screen` | The agent stopped at a screen a person has to answer. `error.screen` names it: `trust` (the folder trust prompt), `bypass_permissions` (the bypass permissions warning), `resume_from_summary` (resuming a large or old session), and for Codex `update` (an update is available), `model_upgrade` (a new model is offered), `sign_in` (Codex isn't signed in) or `resume_directory` (resuming from a folder other than the session's own, so Codex asks which to use), or `unknown`. Codex's folder trust prompt is `trust` too. herdr never answers it | Left open |
 | `agent_start_failed` | The agent exited before it was ready, for example `--resume` with an unknown session ID. `error.output` holds the pane's last lines | Closed |
 | `timeout` | The agent wasn't ready in time. It may still be starting | Left open |
 | Any `agent start` error | For example `agent_pane_busy` or `invalid_agent_argument` | Closed |

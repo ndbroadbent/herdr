@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 
 use super::agent::{launch_agent, AgentLaunch};
 use crate::api::schema::{
-    AgentReadParams, AgentTarget, EmptyParams, Method, PaneReadParams, ReadFormat, ReadSource,
+    AgentReadParams, AgentTarget, EmptyParams, Method, PaneReadParams,
+    PaneReportAgentSessionParams, PaneSendKeysParams, PaneSendTextParams, ReadFormat, ReadSource,
     Request, TabCreateParams, TabTarget,
 };
 
@@ -17,6 +18,11 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const OUTPUT_TAIL_LINES: usize = 20;
 const MAX_AGENT_NAME_LEN: usize = 32;
+/// How long an agent has to stay ready before it counts: some draw a start-up screen a moment
+/// after they first look idle.
+const READY_SETTLE: Duration = Duration::from_millis(1500);
+/// How long to wait for Codex's `/status` to show the session ID.
+const CODEX_STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A screen an agent can stop on while starting, which a person has to answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +33,14 @@ pub(super) enum StartupScreen {
     BypassPermissions,
     /// Resuming a large or old session: "Resume from summary" or "Resume full session as-is".
     ResumeFromSummary,
+    /// Codex: "Update available" with "Update now" and "Skip".
+    Update,
+    /// Codex: "Codex just got an upgrade. Introducing …" with "Try new model".
+    ModelUpgrade,
+    /// Codex: "Sign in with ChatGPT".
+    SignIn,
+    /// Codex: resuming from a folder other than the session's own asks which one to use.
+    ResumeDirectory,
     /// Any other screen that blocks start-up.
     Unknown,
 }
@@ -37,6 +51,10 @@ impl StartupScreen {
             Self::Trust => "trust",
             Self::BypassPermissions => "bypass_permissions",
             Self::ResumeFromSummary => "resume_from_summary",
+            Self::Update => "update",
+            Self::ModelUpgrade => "model_upgrade",
+            Self::SignIn => "sign_in",
+            Self::ResumeDirectory => "resume_directory",
             Self::Unknown => "unknown",
         }
     }
@@ -46,21 +64,37 @@ impl StartupScreen {
             Self::Trust => "the folder trust prompt",
             Self::BypassPermissions => "the bypass permissions warning",
             Self::ResumeFromSummary => "the resume prompt (resume from a summary or in full)",
+            Self::Update => "the update prompt",
+            Self::ModelUpgrade => "the new model prompt",
+            Self::SignIn => "the sign-in screen",
+            Self::ResumeDirectory => "the working directory prompt (session folder or this one)",
             Self::Unknown => "a prompt",
         }
     }
 }
 
 /// Names the start-up screen in an agent's detection text. Each heading is the screen's own
-/// title, which appears nowhere else in Claude's start-up.
+/// title, which appears nowhere else in Claude's or Codex's start-up.
 pub(super) fn startup_screen(detection_text: &str) -> StartupScreen {
     let text = detection_text.to_lowercase();
-    if text.contains("is this a project you created or one you trust") {
+    if text.contains("is this a project you created or one you trust")
+        || text.contains("trust this folder?")
+        || text.contains("do you trust the contents of this directory")
+    {
         StartupScreen::Trust
     } else if text.contains("running in bypass permissions mode") {
         StartupScreen::BypassPermissions
     } else if text.contains("resume from summary") || text.contains("resume full session") {
         StartupScreen::ResumeFromSummary
+    } else if text.contains("update available") && text.contains("update now") {
+        StartupScreen::Update
+    } else if text.contains("codex just got an upgrade") || text.contains("try new model") {
+        StartupScreen::ModelUpgrade
+    } else if text.contains("sign in with chatgpt") {
+        StartupScreen::SignIn
+    } else if text.contains("working directory · resume") || text.contains("use session directory")
+    {
+        StartupScreen::ResumeDirectory
     } else {
         StartupScreen::Unknown
     }
@@ -101,12 +135,35 @@ pub(super) fn agent_name_for_label(
         .unwrap_or(base)
 }
 
-/// Whether the screen itself shows the agent idle. Agents set their window title before they
-/// draw, so a title alone doesn't mean the agent takes input yet.
-fn screen_shows_idle(explain: &Value) -> Option<bool> {
-    let rule = &explain["matched_rule"];
-    let region = rule["region"].as_str()?;
-    Some(rule["state"].as_str() == Some("idle") && !region.starts_with("osc_"))
+/// Whether detection shows the agent idle. An agent can set its window title before it draws,
+/// so for an agent whose rules can see idle on the screen (Claude's prompt box), only a screen
+/// rule counts. An agent whose only idle rule is its title (Codex) counts on the title.
+fn shows_ready(explain: &Value) -> bool {
+    let is_screen = |rule: &Value| {
+        rule["region"]
+            .as_str()
+            .is_some_and(|region| !region.starts_with("osc_"))
+    };
+    let matched = &explain["matched_rule"];
+    if explain["state"].as_str() != Some("idle") || matched["state"].as_str() != Some("idle") {
+        return false;
+    }
+    let has_screen_idle_rule = explain["evaluated_rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|rule| rule["state"].as_str() == Some("idle") && is_screen(rule));
+    is_screen(matched) || !has_screen_idle_rule
+}
+
+/// The session ID in Codex's `/status` output: `Session:   01a20666-…`.
+pub(super) fn codex_status_session_id(text: &str) -> Option<String> {
+    text.lines().rev().find_map(|line| {
+        let value = line.trim().strip_prefix("Session:")?.trim();
+        let id = value.split_whitespace().next()?;
+        (id.len() == 36 && id.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-'))
+            .then(|| id.to_string())
+    })
 }
 
 pub(super) struct TabAgent {
@@ -153,6 +210,7 @@ pub(super) fn create_tab_with_agent(
     }
 
     let deadline = started + timeout;
+    let mut ready_since = None;
     loop {
         let explain = super::send_request(&Request {
             id: REQUEST_ID.into(),
@@ -164,11 +222,13 @@ pub(super) fn create_tab_with_agent(
         if explain["state"].as_str() == Some("blocked") {
             return report_startup_screen(&tab_id, &pane_id, label.as_deref());
         }
-        // Agents without a screen rule for idle (Codex reports `unknown`) are taken as ready.
-        if screen_shows_idle(explain).unwrap_or(true)
-            || explain["state"].as_str() == Some("unknown")
-        {
-            break;
+        if shows_ready(explain) {
+            let since = *ready_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= READY_SETTLE {
+                break;
+            }
+        } else {
+            ready_since = None;
         }
         if Instant::now() >= deadline {
             let error = json!({
@@ -180,12 +240,13 @@ pub(super) fn create_tab_with_agent(
         std::thread::sleep(POLL_INTERVAL);
     }
 
-    let agent_info = super::send_request(&Request {
-        id: REQUEST_ID.into(),
-        method: Method::AgentGet(AgentTarget {
-            target: pane_id.clone(),
-        }),
-    })?;
+    let mut agent_info = agent_get(&pane_id)?;
+    if agent.kind == "codex" && agent_info["result"]["agent"]["agent_session"].is_null() {
+        if let Some(session_id) = codex_session_id(&pane_id)? {
+            record_codex_session(&pane_id, &session_id)?;
+            agent_info = agent_get(&pane_id)?;
+        }
+    }
     let mut response = created;
     response["result"]["agent"] = if agent_info.get("error").is_none() {
         agent_info["result"]["agent"].clone()
@@ -193,6 +254,67 @@ pub(super) fn create_tab_with_agent(
         launched["result"]["agent"].clone()
     };
     super::print_response(&response)
+}
+
+fn agent_get(pane_id: &str) -> std::io::Result<Value> {
+    super::send_request(&Request {
+        id: REQUEST_ID.into(),
+        method: Method::AgentGet(AgentTarget {
+            target: pane_id.to_string(),
+        }),
+    })
+}
+
+/// Codex reports its session ID through its hook only after the first turn, but the session
+/// has its ID from the start, and Codex's local `/status` command shows it without a model call.
+fn codex_session_id(pane_id: &str) -> std::io::Result<Option<String>> {
+    super::send_request(&Request {
+        id: REQUEST_ID.into(),
+        method: Method::PaneSendText(PaneSendTextParams {
+            pane_id: pane_id.to_string(),
+            text: "/status".into(),
+        }),
+    })?;
+    // Let Codex's command menu catch up before Enter picks the command.
+    std::thread::sleep(Duration::from_millis(500));
+    super::send_request(&Request {
+        id: REQUEST_ID.into(),
+        method: Method::PaneSendKeys(PaneSendKeysParams {
+            pane_id: pane_id.to_string(),
+            keys: vec!["Enter".into()],
+        }),
+    })?;
+    let deadline = Instant::now() + CODEX_STATUS_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(id) = codex_status_session_id(&detection_text(pane_id)?) {
+            return Ok(Some(id));
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    Ok(None)
+}
+
+/// Records the session on the pane the way Codex's own hook does, so `agent list`, restore and
+/// `herdr restart` know it before the first turn.
+fn record_codex_session(pane_id: &str, session_id: &str) -> std::io::Result<()> {
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or_default();
+    super::send_request(&Request {
+        id: REQUEST_ID.into(),
+        method: Method::PaneReportAgentSession(PaneReportAgentSessionParams {
+            pane_id: pane_id.to_string(),
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            seq: Some(seq),
+            agent_session_id: Some(session_id.to_string()),
+            agent_session_path: None,
+            session_start_source: Some("startup".into()),
+            resume_argv: None,
+        }),
+    })?;
+    Ok(())
 }
 
 /// Starts the agent under a name generated from the tab label, trying the next name if another
@@ -394,25 +516,70 @@ mod tests {
             StartupScreen::ResumeFromSummary
         );
         assert_eq!(
+            startup_screen("Update available · 0.166.0 → 0.169.0\n› 1. Update now (runs `npm install -g @openai/codex`)\n  2. Skip"),
+            StartupScreen::Update
+        );
+        assert_eq!(
+            startup_screen("Codex just got an upgrade. Introducing a new model.\n› Try new model\n  Use existing model"),
+            StartupScreen::ModelUpgrade
+        );
+        assert_eq!(
+            startup_screen("Sign in with ChatGPT to use Codex"),
+            StartupScreen::SignIn
+        );
+        assert_eq!(
+            startup_screen("  Working directory · resume\n› 1. Use session directory (/src/a)\n  2. Use current directory (/src/b)"),
+            StartupScreen::ResumeDirectory
+        );
+        assert_eq!(
+            startup_screen(
+                "> You are in /src\nTrust this folder?\nCodex can read, edit, and run files here"
+            ),
+            StartupScreen::Trust
+        );
+        assert_eq!(
             startup_screen("Do you want to proceed?\n❯ 1. Yes"),
             StartupScreen::Unknown
         );
     }
 
     #[test]
-    fn only_a_screen_rule_counts_as_ready() {
-        let rule =
-            |state: &str, region: &str| json!({"matched_rule": {"state": state, "region": region}});
+    fn a_title_counts_as_ready_only_for_agents_without_a_screen_rule_for_idle() {
+        let rule = |state: &str, region: &str| json!({"state": state, "region": region});
+        let explain = |matched: Value, rules: Vec<Value>| json!({"state": matched["state"].clone(), "matched_rule": matched, "evaluated_rules": rules});
+        let claude_rules = vec![rule("idle", "prompt_box_body"), rule("idle", "osc_title")];
+        let codex_rules = vec![
+            rule("blocked", "bottom_non_empty_lines(20)"),
+            rule("idle", "osc_title"),
+        ];
+
+        assert!(shows_ready(&explain(
+            rule("idle", "prompt_box_body"),
+            claude_rules.clone()
+        )));
+        assert!(!shows_ready(&explain(
+            rule("idle", "osc_title"),
+            claude_rules
+        )));
+        assert!(shows_ready(&explain(
+            rule("idle", "osc_title"),
+            codex_rules.clone()
+        )));
+        assert!(!shows_ready(&explain(
+            rule("working", "osc_title"),
+            codex_rules
+        )));
+    }
+
+    #[test]
+    fn codex_status_shows_the_session_id() {
+        let status = "  Account:             someone@example.com (Pro)\n  Session:             01a20666-5c1c-70a3-a362-05f9d9a7ba04\n  Weekly limit: 88% left";
         assert_eq!(
-            screen_shows_idle(&rule("idle", "prompt_box_body")),
-            Some(true)
+            codex_status_session_id(status).as_deref(),
+            Some("01a20666-5c1c-70a3-a362-05f9d9a7ba04")
         );
-        assert_eq!(screen_shows_idle(&rule("idle", "osc_title")), Some(false));
-        assert_eq!(
-            screen_shows_idle(&rule("working", "bottom_non_empty_lines(12)")),
-            Some(false)
-        );
-        assert_eq!(screen_shows_idle(&json!({"matched_rule": null})), None);
+        assert_eq!(codex_status_session_id("› Ask Codex to do anything"), None);
+        assert_eq!(codex_status_session_id("  Session: not-an-id"), None);
     }
 
     #[test]
