@@ -963,9 +963,10 @@ fn stream_subscriptions(
             return Ok(());
         }
 
+        let mut batches = Vec::with_capacity(subscriptions.len());
         for subscription in &mut subscriptions {
-            let events = match subscription.poll_batch(api_tx, event_hub) {
-                Ok(events) => events,
+            match subscription.poll_sequenced_batch(api_tx, event_hub) {
+                Ok(batch) => batches.push(batch),
                 Err(error) => {
                     write_json_line_allow_disconnect(
                         &mut stream,
@@ -976,17 +977,17 @@ fn stream_subscriptions(
                     )?;
                     return Ok(());
                 }
-            };
-            for event in events {
-                if should_stop_connection(&mut stream, running)? {
+            }
+        }
+        for event in crate::api::subscriptions::merge_in_event_order(batches) {
+            if should_stop_connection(&mut stream, running)? {
+                return Ok(());
+            }
+            if let Err(err) = write_json_line(&mut stream, &event) {
+                if is_connection_closed_error(&err) {
                     return Ok(());
                 }
-                if let Err(err) = write_json_line(&mut stream, &event) {
-                    if is_connection_closed_error(&err) {
-                        return Ok(());
-                    }
-                    return Err(err);
-                }
+                return Err(err);
             }
         }
         std::thread::sleep(CONNECTION_POLL_INTERVAL);

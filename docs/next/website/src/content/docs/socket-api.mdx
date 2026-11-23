@@ -811,9 +811,14 @@ current state: replace the cache with the snapshot, and treat incoming events
 as invalidation signals that trigger another read. Serialize refreshes and
 refresh again if events arrive while a read is in flight.
 
-Snapshots and events have no shared sequence boundary. Ordering is guaranteed
-within each subscription entry, not across entries or relative to a snapshot,
-so do not unconditionally replay buffered event payloads onto the snapshot.
+Snapshots and events have no shared sequence boundary. Within one subscription
+connection, lifecycle events arrive in the order they happened, across all of its
+subscription entries: a `pane.agent_exited` and the `tab.closed` that follows it
+arrive in that order whichever entry was listed first. Samples of current state
+(`pane.output_matched`, `pane.scroll_changed`, and a `pane.agent_status_changed`
+read from a snapshot) follow the events delivered with them. There is no ordering
+relative to a snapshot or to another connection, so do not unconditionally replay
+buffered event payloads onto the snapshot.
 Recovery restores current state, not the missing event history. Another
 `events_lost` requires resubscribing and reconciling again. Slow readers may
 need to increase read throughput or reduce event load.

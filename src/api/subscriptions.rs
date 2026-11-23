@@ -282,11 +282,27 @@ impl ActiveSubscription {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn poll_batch(
         &mut self,
         api_tx: &ApiRequestSender,
         event_hub: &EventHub,
     ) -> Result<Vec<serde_json::Value>, ErrorBody> {
+        Ok(self
+            .poll_sequenced_batch(api_tx, event_hub)?
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect())
+    }
+
+    /// The new events for this subscription, each with its event history sequence so a
+    /// stream can merge several subscriptions in the order the events happened. Events
+    /// sampled from current state rather than history have no sequence.
+    pub(super) fn poll_sequenced_batch(
+        &mut self,
+        api_tx: &ApiRequestSender,
+        event_hub: &EventHub,
+    ) -> Result<Vec<(Option<u64>, serde_json::Value)>, ErrorBody> {
         match self {
             Self::Event(subscription) => {
                 let events = subscription_events_after(event_hub, subscription.last_sequence)?;
@@ -294,7 +310,10 @@ impl ActiveSubscription {
                 for (sequence, event) in events {
                     subscription.last_sequence = sequence;
                     if event.event == subscription.event_kind {
-                        matching.push(serde_json::to_value(event).map_err(event_encoding_error)?);
+                        matching.push((
+                            Some(sequence),
+                            serde_json::to_value(event).map_err(event_encoding_error)?,
+                        ));
                     }
                 }
                 Ok(matching)
@@ -305,25 +324,43 @@ impl ActiveSubscription {
                 for (sequence, event) in events {
                     subscription.last_sequence = sequence;
                     if let Some(event) = subscription.event_from_history(event) {
-                        matching.push(serde_json::to_value(event).map_err(event_encoding_error)?);
+                        matching.push((
+                            Some(sequence),
+                            serde_json::to_value(event).map_err(event_encoding_error)?,
+                        ));
                     }
                 }
                 if matching.is_empty() {
                     if let Some(event) =
                         subscription.poll_snapshot(api_tx, event_hub).ok().flatten()
                     {
-                        matching.push(serde_json::to_value(event).map_err(event_encoding_error)?);
+                        matching.push((
+                            None,
+                            serde_json::to_value(event).map_err(event_encoding_error)?,
+                        ));
                     }
                 }
                 Ok(matching)
             }
             // These subscriptions sample current state, not retained event history.
             // Keep their existing cadence even when a lifecycle batch was nonempty.
-            Self::OutputMatched(_) | Self::ScrollChanged(_) => {
-                Ok(self.poll(api_tx, event_hub).into_iter().collect())
-            }
+            Self::OutputMatched(_) | Self::ScrollChanged(_) => Ok(self
+                .poll(api_tx, event_hub)
+                .into_iter()
+                .map(|event| (None, event))
+                .collect()),
         }
     }
+}
+
+/// Puts one poll's events from all of a stream's subscriptions in the order they happened.
+/// Events sampled from current state have no sequence and follow, in subscription order.
+pub(super) fn merge_in_event_order(
+    batches: Vec<Vec<(Option<u64>, serde_json::Value)>>,
+) -> Vec<serde_json::Value> {
+    let mut events = batches.into_iter().flatten().collect::<Vec<_>>();
+    events.sort_by_key(|(sequence, _)| sequence.unwrap_or(u64::MAX));
+    events.into_iter().map(|(_, event)| event).collect()
 }
 
 fn subscription_events_after(
@@ -779,6 +816,54 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_stream_delivers_its_subscriptions_events_in_the_order_they_happened() {
+        let event_hub = EventHub::default();
+        let start = event_hub.current_sequence();
+        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Subscribed in the opposite order to the events below.
+        let mut subscriptions = [
+            Subscription::PaneExited {},
+            Subscription::WorkspaceFocused {},
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, subscription)| {
+            ActiveSubscription::new(subscription, "order", index, &api_tx, &event_hub, start)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+        event_hub.push(workspace_focused_event("first"));
+        event_hub.push(EventEnvelope {
+            event: EventKind::PaneExited,
+            data: EventData::PaneExited {
+                pane_id: "pane_1".into(),
+                workspace_id: "second".into(),
+            },
+        });
+        event_hub.push(workspace_focused_event("third"));
+
+        let batches = subscriptions
+            .iter_mut()
+            .map(|subscription| {
+                subscription
+                    .poll_sequenced_batch(&api_tx, &event_hub)
+                    .unwrap()
+            })
+            .collect();
+        let events = merge_in_event_order(batches);
+
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["workspace_focused", "pane_exited", "workspace_focused"]
+        );
+        assert_eq!(events[0]["data"]["workspace_id"], "first");
+        assert_eq!(events[2]["data"]["workspace_id"], "third");
     }
 
     #[test]
