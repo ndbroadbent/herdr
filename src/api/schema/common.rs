@@ -61,6 +61,16 @@ pub struct ClientWindowTitleSetParams {
     pub title: String,
 }
 
+/// Opens a tab in the Herdr window used most recently on this computer (`herdr://open` links).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClientOpenParams {
+    /// A saved machine's label or profile ID; none or `local` means this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// A tab label or tab ID on that machine.
+    pub tab: String,
+}
+
 /// Updates whether the requesting client shell receives and controls pane presentation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClientShellSurfaceSetParams {

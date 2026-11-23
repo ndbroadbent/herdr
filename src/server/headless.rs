@@ -1519,6 +1519,56 @@ impl HeadlessServer {
         sent
     }
 
+    /// Sends a `herdr://open` request to the Herdr window used most recently, which switches to
+    /// the machine and tab itself (the machine it shows is its own state).
+    fn handle_client_open_api(
+        &mut self,
+        id: String,
+        params: api::schema::ClientOpenParams,
+    ) -> String {
+        let error = |code: &str, message: &str| {
+            serde_json::to_string(&api::schema::ErrorResponse {
+                id: id.clone(),
+                error: api::schema::ErrorBody {
+                    code: code.into(),
+                    message: message.into(),
+                },
+            })
+            .unwrap_or_else(|_| "{}".to_string())
+        };
+        if params.tab.trim().is_empty() {
+            return error("invalid_params", "tab is empty");
+        }
+        let Some(client_id) = crate::server::clients::most_recent_shell_client(&self.clients)
+        else {
+            return error(
+                "client_not_attached",
+                "no Herdr window is attached to this server",
+            );
+        };
+        let target = crate::protocol::endpoint::EndpointOpenTarget {
+            machine: params.machine.filter(|machine| !machine.trim().is_empty()),
+            tab: params.tab,
+        };
+        match crate::protocol::endpoint::open_target_message(&target) {
+            Ok(message) => {
+                if !self.send_to_client(client_id, message) {
+                    return error(
+                        "client_not_attached",
+                        "the Herdr window couldn't be reached",
+                    );
+                }
+            }
+            Err(err) => return error("internal_error", &err.to_string()),
+        }
+        info!(client_id, machine = ?target.machine, tab = %target.tab, "sent link target to client");
+        serde_json::to_string(&api::schema::SuccessResponse {
+            id,
+            result: api::schema::ResponseResult::Ok {},
+        })
+        .unwrap_or_else(|_| "{}".to_string())
+    }
+
     fn handle_client_window_title_api(&mut self, id: String, title: Option<String>) -> String {
         use api::schema::{ClientWindowTitleReason, ResponseResult};
 
@@ -2974,6 +3024,11 @@ impl HeadlessServer {
                 let response = self.handle_client_window_title_api(msg.request.id.clone(), None);
                 let _ = msg.respond_to.send(response);
                 return true;
+            }
+            api::schema::Method::ClientOpen(params) => {
+                let response = self.handle_client_open_api(msg.request.id.clone(), params.clone());
+                let _ = msg.respond_to.send(response);
+                return false;
             }
             _ => {}
         }

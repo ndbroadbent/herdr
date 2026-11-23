@@ -147,6 +147,21 @@ herdr notification show <title> [--body TEXT] [--position top-left|top-right|bot
 
 `notification show` uses the configured `[ui.toast]` delivery. `--position` only affects in-app Herdr toasts. `--sound` defaults to `none`; `done` and `request` play the existing finished and needs-attention sounds only when the notification is shown.
 
+## Open a tab from a link
+
+```bash
+herdr open 'herdr://open?machine=<label>&tab=<label>'
+herdr open --tab <label> [--on <machine>]
+herdr open --install-handler [--herdr <path>]
+herdr open --uninstall-handler
+```
+
+`herdr open` switches the Herdr window you used most recently on this computer to a tab, on this computer or on a [saved machine](/docs/connecting-machines/), and brings its terminal window to the front. Only that window moves; other Herdr windows stay where they are. `tab` is the tab's label or ID. `machine` is a saved machine's label or profile ID; leave it out, or use `local`, for a tab on this computer. Percent-encode spaces and other special characters in a link (`email%20triage`).
+
+The command succeeds once the window has the request. If that window can't find the machine or the tab, it shows a **Can't open link** notice saying why. With no Herdr window open, the command fails with `client_not_attached`. Bringing the window forward works in iTerm2; in other terminals the window switches tab but stays behind.
+
+On macOS, `herdr open --install-handler` makes `herdr://` links work everywhere, from a browser, a chat app, or `open 'herdr://open?tab=build'`. It installs a small app, `~/Applications/Herdr Links.app`, that passes each link to the `herdr` you ran it with, or to the program given with `--herdr` (for example a script that opens links in a named session). Run it again after moving Herdr. If `herdr open` fails, the reason shows as a macOS notification. `--uninstall-handler` removes the app.
+
 ## Sessions
 
 ```bash

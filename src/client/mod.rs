@@ -2113,6 +2113,37 @@ async fn run_client_loop(
                                 }
                                 continue;
                             }
+                            Ok(endpoint::EndpointControlMessage::OpenTarget(target)) => {
+                                // Only this computer's own server may move this window.
+                                if !endpoint_id.is_local() {
+                                    continue;
+                                }
+                                let (width, height) = state.reported_size;
+                                let Some((outcome, frame)) = state.shell.as_mut().map(|shell| {
+                                    let outcome =
+                                        shell.open_target(target.machine.as_deref(), &target.tab);
+                                    (outcome, shell.compose(width, height))
+                                }) else {
+                                    continue;
+                                };
+                                info!(machine = ?target.machine, tab = %target.tab, "opening link target");
+                                if let Err(err) = crate::terminal_notify::bring_window_forward() {
+                                    warn!(%err, "failed to bring the terminal window forward");
+                                }
+                                if finish_client_shell_input(
+                                    &mut state,
+                                    outcome,
+                                    frame,
+                                    &mut write_stream,
+                                    &mut pending_activation,
+                                    &mut endpoint_commands,
+                                    &mut prefix_input_source,
+                                    &mut scheduled_activation,
+                                )? {
+                                    return Ok(());
+                                }
+                                continue;
+                            }
                             Ok(endpoint::EndpointControlMessage::Ignored) => {
                                 debug!(%kind, "ignoring unknown endpoint control message");
                                 continue;

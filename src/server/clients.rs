@@ -481,6 +481,18 @@ pub(crate) fn latest_shell_client(clients: &HashMap<u64, ClientConnection>) -> O
         .map(|(&client_id, _)| client_id)
 }
 
+/// The Herdr window used most recently, whichever machine it is showing: the one a
+/// `herdr://open` link moves.
+pub(crate) fn most_recent_shell_client(clients: &HashMap<u64, ClientConnection>) -> Option<u64> {
+    clients
+        .iter()
+        .filter(|(_, client)| {
+            matches!(client.mode, ClientConnectionMode::ClientShell) && client.writer.is_some()
+        })
+        .max_by_key(|(_, client)| client.last_activity)
+        .map(|(&client_id, _)| client_id)
+}
+
 pub(crate) fn terminal_stream_client_ids(
     clients: &HashMap<u64, ClientConnection>,
     terminal_id: &str,

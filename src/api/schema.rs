@@ -69,6 +69,8 @@ pub enum Method {
     CommandInvoke(CommandInvokeParams),
     #[serde(rename = "client.window_title.set")]
     ClientWindowTitleSet(ClientWindowTitleSetParams),
+    #[serde(rename = "client.open")]
+    ClientOpen(ClientOpenParams),
     #[serde(rename = "client.window_title.clear")]
     ClientWindowTitleClear(EmptyParams),
     #[serde(rename = "client_shell.surface.set")]

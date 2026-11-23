@@ -55,6 +55,25 @@ pub fn show_notification(title: &str, body: Option<&str>) -> io::Result<bool> {
     Ok(true)
 }
 
+/// Asks the terminal the client runs in to bring its window to the front, for `herdr://open`
+/// links. Only iTerm2 has a sequence for it (`OSC 1337 ; StealFocus`). Returns whether one
+/// was sent.
+pub fn bring_window_forward() -> io::Result<bool> {
+    if detect_backend() != Some(TerminalNotificationBackend::Iterm2) {
+        return Ok(false);
+    }
+    let sequence = b"\x1b]1337;StealFocus\x07".to_vec();
+    let sequence = if std::env::var_os("TMUX").is_some() {
+        wrap_tmux_passthrough(&sequence)
+    } else {
+        sequence
+    };
+    let mut stdout = io::stdout();
+    stdout.write_all(&sequence)?;
+    stdout.flush()?;
+    Ok(true)
+}
+
 pub fn split_message(message: &str) -> (&str, Option<&str>) {
     match message.split_once(": ") {
         Some((title, body)) if !title.is_empty() && !body.is_empty() => (title, Some(body)),

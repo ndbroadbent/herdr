@@ -685,6 +685,116 @@ pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }
 
+/// Where `herdr open --install-handler` puts the `herdr://` link handler app.
+pub fn link_handler_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join("Applications")
+            .join("Herdr Links.app"),
+    )
+}
+
+const LINK_HANDLER_BUNDLE_ID: &str = "dev.herdr.link-handler";
+const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+/// Installs a small AppleScript app that registers the `herdr://` scheme and hands every link
+/// to `<herdr> open <link>`. Replaces an earlier copy of itself, never another app.
+pub fn install_link_handler(herdr: &Path) -> std::io::Result<PathBuf> {
+    let app = link_handler_path().ok_or_else(|| std::io::Error::other("HOME is not set"))?;
+    remove_own_link_handler(&app)?;
+    if let Some(parent) = app.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let herdr = herdr.to_string_lossy();
+    let applescript_string = format!("\"{}\"", herdr.replace('\\', "\\\\").replace('"', "\\\""));
+    // A failure shows as a notification, not a dialog that blocks until dismissed.
+    let script = format!(
+        "on open location theURL\n\ttry\n\t\tdo shell script (quoted form of {applescript_string}) & \" open \" & quoted form of theURL\n\ton error errorMessage\n\t\tdisplay notification errorMessage with title \"Herdr link\"\n\tend try\nend open location\n"
+    );
+    let source = std::env::temp_dir().join(format!(
+        "herdr-link-handler-{}.applescript",
+        std::process::id()
+    ));
+    std::fs::write(&source, script)?;
+    let compiled = run_tool(Command::new("osacompile").arg("-o").arg(&app).arg(&source));
+    let _ = std::fs::remove_file(&source);
+    compiled?;
+    let plist = app.join("Contents").join("Info.plist");
+    // osacompile may or may not write a bundle identifier.
+    let _ = run_tool(
+        Command::new("/usr/libexec/PlistBuddy")
+            .args(["-c", "Delete :CFBundleIdentifier"])
+            .arg(&plist),
+    );
+    for command in [
+        format!("Add :CFBundleIdentifier string {LINK_HANDLER_BUNDLE_ID}"),
+        "Add :LSUIElement bool true".to_owned(),
+        "Add :CFBundleURLTypes array".to_owned(),
+        "Add :CFBundleURLTypes:0 dict".to_owned(),
+        "Add :CFBundleURLTypes:0:CFBundleURLName string herdr link".to_owned(),
+        "Add :CFBundleURLTypes:0:CFBundleURLSchemes array".to_owned(),
+        "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string herdr".to_owned(),
+    ] {
+        run_tool(
+            Command::new("/usr/libexec/PlistBuddy")
+                .arg("-c")
+                .arg(&command)
+                .arg(&plist),
+        )?;
+    }
+    // Editing Info.plist invalidates osacompile's signature.
+    run_tool(
+        Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&app),
+    )?;
+    run_tool(Command::new(LSREGISTER).arg("-f").arg(&app))?;
+    Ok(app)
+}
+
+/// Removes the link handler app if it's there. Returns whether there was one.
+pub fn uninstall_link_handler() -> std::io::Result<bool> {
+    let Some(app) = link_handler_path() else {
+        return Ok(false);
+    };
+    if !app.exists() {
+        return Ok(false);
+    }
+    let _ = run_tool(Command::new(LSREGISTER).arg("-u").arg(&app));
+    remove_own_link_handler(&app)?;
+    Ok(true)
+}
+
+fn remove_own_link_handler(app: &Path) -> std::io::Result<()> {
+    if !app.exists() {
+        return Ok(());
+    }
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args(["-c", "Print :CFBundleIdentifier"])
+        .arg(app.join("Contents").join("Info.plist"))
+        .output()?;
+    if String::from_utf8_lossy(&output.stdout).trim() != LINK_HANDLER_BUNDLE_ID {
+        return Err(std::io::Error::other(format!(
+            "{} exists and isn't Herdr's link handler; move it away first",
+            app.display()
+        )));
+    }
+    std::fs::remove_dir_all(app)
+}
+
+fn run_tool(command: &mut Command) -> std::io::Result<()> {
+    let output = command.stdin(Stdio::null()).output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(std::io::Error::other(format!(
+        "{:?} failed: {}",
+        command.get_program(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
+}
+
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     Command::new("open")
         .arg(url)

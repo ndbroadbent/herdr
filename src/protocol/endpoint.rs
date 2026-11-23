@@ -31,6 +31,25 @@ pub const AGENT_VIEW_PROJECTION_CAPABILITY: &str = "agent_view_projection";
 pub const AGENT_VIEW_PROJECTION_KIND: &str = "endpoint.agent-view.v1";
 pub const AGENT_COMPLETIONS_CAPABILITY: &str = "agent_completions";
 pub const AGENT_COMPLETIONS_KIND: &str = "endpoint.agent-completions.v1";
+/// Asks a client to open a tab (`client.open`, `herdr://open` links). Optional: a client that
+/// doesn't know it ignores it.
+pub const OPEN_TARGET_KIND: &str = "client.open-target.v1";
+
+/// Where an `OPEN_TARGET_KIND` request points: a tab label or ID on a saved machine's label or
+/// profile ID, or on this computer when `machine` is none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EndpointOpenTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    pub tab: String,
+}
+
+pub fn open_target_message(target: &EndpointOpenTarget) -> serde_json::Result<ServerMessage> {
+    Ok(ServerMessage::EndpointControl {
+        kind: OPEN_TARGET_KIND.into(),
+        data: serde_json::to_string(target)?,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointAgentCompletions {

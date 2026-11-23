@@ -98,7 +98,7 @@ Raw socket method names use dot notation:
 | --- | --- |
 | Server | `ping`, `server.stop`, `server.reload_config`, `server.agent_manifests`, `server.reload_agent_manifests` |
 | Notification | `notification.show` |
-| Client | `client.window_title.set`, `client.window_title.clear` |
+| Client | `client.window_title.set`, `client.window_title.clear`, `client.open` |
 | Session | `session.snapshot` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
@@ -340,6 +340,16 @@ Set or clear the foreground client's outer terminal window title:
 `client.window_title.clear` hands the title back to `ui.window_title`. The response is
 `type: "client_window_title"` with `changed` and reason `set`, `cleared`, or
 `no_foreground_client`.
+
+Open a tab in the Herdr window used most recently, as `herdr://open` links do (see
+[Open a tab from a link](/docs/cli-reference/#open-a-tab-from-a-link)):
+
+```json
+{"id":"req_open","method":"client.open","params":{"machine":"agents","tab":"email triage"}}
+```
+
+`machine` is optional. The response is `type: "ok"` once the window has the request, or
+`client_not_attached` when no Herdr window is attached to this server.
 
 Worktree methods manage Git checkouts as Herdr workspaces. `worktree.create` creates a checkout and returns the new `workspace`, `tab`, `root_pane`, and `worktree` records. If the requested branch already exists locally, it checks out that branch; otherwise it creates the branch from the requested base or `HEAD`. `worktree.open` opens an existing checkout or returns the already-open workspace. `worktree.remove` runs `git worktree remove` against a linked child workspace and never deletes the branch.
 
@@ -1100,7 +1110,7 @@ Every error has the shape `{"id":"…","error":{"code":"…","message":"…"}}`.
 | Metadata | `invalid_metadata_request`, `invalid_metadata_source`, `invalid_metadata_token`, `invalid_metadata_ttl`, `invalid_state_label`, `metadata_token_limit`, `metadata_sequence_source_limit` |
 | Worktrees | `worktree_not_found`, `worktree_busy`, `worktree_create_failed`, `worktree_open_failed`, `worktree_remove_failed`, `worktree_list_failed`, `worktree_operation_in_progress`, `stale_worktree_operation`, `dirty_worktree_requires_force`, `linked_worktree_source`, `not_linked_worktree` |
 | Plugins | `plugin_not_found`, `plugin_disabled`, `plugin_manifest_unavailable`, `plugin_registry_load_failed`, `plugin_registry_save_failed`, `plugin_link_failed`, `plugin_user_dir_create_failed`, `plugin_pane_open_failed`, `plugin_pane_not_found`, `invalid_plugin_id`, `invalid_plugin_entrypoint`, `command_not_found`, `command_failed`, `command_target_mismatch` |
-| Other | `handoff_failed`, `integration_install_failed`, `integration_uninstall_failed`, `scrollback_editor_failed`, `copy_motion_unavailable`, `query_too_large`, `stale_announcement`, `stale_release_notes` |
+| Other | `client_not_attached` (`client.open` with no Herdr window attached), `handoff_failed`, `integration_install_failed`, `integration_uninstall_failed`, `scrollback_editor_failed`, `copy_motion_unavailable`, `query_too_large`, `stale_announcement`, `stale_release_notes` |
 
 ## Protocol stability
 

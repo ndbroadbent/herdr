@@ -1184,6 +1184,14 @@ impl App {
             Method::CommandInvoke(params) => {
                 return self.handle_command_invoke(request.id, params);
             }
+            // Handled by the server, which knows its clients.
+            Method::ClientOpen(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "client_not_attached",
+                    "no Herdr window is attached to this server",
+                );
+            }
             Method::ClientWindowTitleSet(_) | Method::ClientWindowTitleClear(_) => {
                 return responses::encode_success(
                     request.id,

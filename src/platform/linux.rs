@@ -871,6 +871,24 @@ pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }
 
+/// `herdr://` links are only handled on macOS so far.
+pub fn link_handler_path() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// `herdr://` links are only handled on macOS so far.
+pub fn install_link_handler(_herdr: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "the herdr:// link handler is only available on macOS",
+    ))
+}
+
+/// `herdr://` links are only handled on macOS so far.
+pub fn uninstall_link_handler() -> std::io::Result<bool> {
+    Ok(false)
+}
+
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     Command::new("xdg-open")
         .arg(url)

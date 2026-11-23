@@ -135,6 +135,10 @@ herdr notification show <title> [--body TEXT] [--position top-left|top-right|bot
 
 `notification show` 使用配置的 `[ui.toast]` 投递方式。`--position` 只影响 Herdr 应用内的 toast。`--sound` 默认为 `none`;`done` 和 `request` 只在通知实际显示时播放已有的完成音和需要关注音。
 
+## 从链接打开标签页
+
+`herdr open 'herdr://open?machine=<label>&tab=<label>'` 会把最近使用的 Herdr 窗口切换到该标签页。在 macOS 上，`herdr open --install-handler` 会注册 `herdr://` 链接。详细说明见英文文档。
+
 ## 会话
 
 ```bash

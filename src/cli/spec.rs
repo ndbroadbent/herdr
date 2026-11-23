@@ -42,6 +42,7 @@ pub(super) fn command() -> Command {
         .subcommand(worktree_command())
         .subcommand(tab_command())
         .subcommand(notification_command())
+        .subcommand(open_command())
         .subcommand(agent_command())
         .subcommand(pane_command())
         .subcommand(terminal_command())
@@ -326,6 +327,17 @@ fn tab_command() -> Command {
                 .arg(required("label", "LABEL").num_args(1..)),
         )
         .subcommand(id_command("close", "tab_id", "Close a tab"))
+}
+
+fn open_command() -> Command {
+    Command::new("open")
+        .about("Open a tab in the Herdr window used most recently, from a herdr:// link")
+        .arg(Arg::new("link").value_name("LINK"))
+        .arg(option("tab", "LABEL"))
+        .arg(option("on", "MACHINE"))
+        .arg(flag("install-handler"))
+        .arg(flag("uninstall-handler"))
+        .arg(path_option("herdr", "PATH"))
 }
 
 fn notification_command() -> Command {
