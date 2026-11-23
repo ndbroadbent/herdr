@@ -1149,6 +1149,39 @@ fn claude_v9_integration_status_is_outdated_until_reinstalled() {
 }
 
 #[test]
+fn a_claude_hook_that_settings_dont_call_is_outdated_until_reinstalled() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    std::env::set_var("HOME", &home);
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    install_claude().unwrap();
+    let hook_path = home
+        .join(".claude")
+        .join("hooks")
+        .join(CLAUDE_HOOK_INSTALL_NAME);
+    let status = || {
+        integration_status_at(
+            crate::api::schema::IntegrationTarget::Claude,
+            hook_path.clone(),
+            CLAUDE_INTEGRATION_VERSION,
+        )
+        .state
+    };
+    assert_eq!(status(), IntegrationStatusKind::Current);
+
+    // Something rewrote settings.json without herdr's hooks; the script is still current.
+    fs::write(home.join(".claude").join("settings.json"), "{\"model\": \"opus\"}\n").unwrap();
+    assert_eq!(status(), IntegrationStatusKind::Outdated);
+
+    install_claude().unwrap();
+    assert_eq!(status(), IntegrationStatusKind::Current);
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn claude_v2_integration_status_is_outdated() {
     let _lock = integration_env_lock();
     let base = unique_base();

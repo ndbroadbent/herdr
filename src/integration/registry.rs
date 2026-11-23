@@ -461,6 +461,18 @@ fn integration_state_for_path(
     (state, installed_version)
 }
 
+fn claude_settings_call_hook(hook_path: &Path) -> bool {
+    let Some(settings_path) = hook_path
+        .parent()
+        .and_then(Path::parent)
+        .map(|dir| dir.join("settings.json"))
+    else {
+        return false;
+    };
+    let content = fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_owned());
+    super::claude_settings::hook_is_wired(&content, &settings_path, hook_path)
+}
+
 pub(crate) fn integration_status_at(
     target: crate::api::schema::IntegrationTarget,
     path: PathBuf,
@@ -475,6 +487,14 @@ pub(crate) fn integration_status_at(
     if target == crate::api::schema::IntegrationTarget::Grok
         && state == super::IntegrationStatusKind::Current
         && !grok_hook_config_is_valid(&path)
+    {
+        state = super::IntegrationStatusKind::Outdated;
+    }
+    // Claude Code runs the hook only when settings.json calls it, and herdr learns a
+    // session's ID (which resume needs) only from that hook.
+    if target == crate::api::schema::IntegrationTarget::Claude
+        && state == super::IntegrationStatusKind::Current
+        && !claude_settings_call_hook(&path)
     {
         state = super::IntegrationStatusKind::Outdated;
     }

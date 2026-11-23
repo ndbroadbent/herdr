@@ -94,6 +94,12 @@ pub(crate) fn install(content: &str, settings_path: &Path, hook_path: &Path) -> 
     )
 }
 
+/// Whether `content` already calls the hook the way an install leaves it, so installing again
+/// would change nothing.
+pub(crate) fn hook_is_wired(content: &str, settings_path: &Path, hook_path: &Path) -> bool {
+    install(content, settings_path, hook_path).is_ok_and(|updated| updated == content)
+}
+
 pub(crate) fn uninstall(
     content: &str,
     settings_path: &Path,
