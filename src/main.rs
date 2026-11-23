@@ -415,7 +415,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # {reason} is why it stopped: "the computer restarted", "herdr restarted" or
 # "your usage limit reset".
 # [session.auto_continue]
-# enabled = false
+# enabled = true
 # message = "Please continue where you left off. ({reason})"
 # delay_seconds = 180
 

@@ -116,7 +116,7 @@ If native agent session restore applies to a pane, Herdr resumes the agent sessi
 
 ## Auto-continue
 
-An agent that a restart stopped in the middle of a turn comes back idle: native agent session restore reopens its conversation, but the agent doesn't pick up the work by itself. Herdr can send it a message once it's back, saying why it stopped. It does the same for Codex when its usage limit resets. Auto-continue is off by default:
+An agent that a restart stopped in the middle of a turn comes back idle: native agent session restore reopens its conversation, but the agent doesn't pick up the work by itself. Herdr can send it a message once it's back, saying why it stopped. It does the same for Codex when its usage limit resets. Auto-continue is on by default. These are the defaults; set `enabled = false` to turn it off:
 
 ```toml
 [session.auto_continue]

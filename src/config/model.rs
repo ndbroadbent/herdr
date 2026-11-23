@@ -297,7 +297,7 @@ pub const DEFAULT_AUTO_CONTINUE_DELAY_SECONDS: u64 = 180;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct AutoContinueConfig {
-    /// Send the message to agents whose work was interrupted. Default: false.
+    /// Send the message to agents whose work was interrupted. Default: true.
     pub enabled: bool,
     /// The message. `{reason}` stands for why the work stopped, such as
     /// "the computer restarted".
@@ -310,7 +310,7 @@ pub struct AutoContinueConfig {
 impl Default for AutoContinueConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             message: DEFAULT_AUTO_CONTINUE_MESSAGE.to_string(),
             delay_seconds: DEFAULT_AUTO_CONTINUE_DELAY_SECONDS,
         }
@@ -1504,20 +1504,20 @@ startup_per_agent_delay_ms = 0
     }
 
     #[test]
-    fn auto_continue_defaults_off_and_parses() {
+    fn auto_continue_defaults_on_and_parses() {
         let default_config = Config::default().session.auto_continue;
-        assert!(!default_config.enabled);
+        assert!(default_config.enabled);
         assert!(default_config.message.contains("{reason}"));
         assert_eq!(default_config.delay_seconds, 180);
 
         let toml = r#"
 [session.auto_continue]
-enabled = true
+enabled = false
 delay_seconds = 60
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         let auto_continue = config.session.auto_continue;
-        assert!(auto_continue.enabled);
+        assert!(!auto_continue.enabled);
         assert_eq!(auto_continue.delay_seconds, 60);
         assert_eq!(auto_continue.message, DEFAULT_AUTO_CONTINUE_MESSAGE);
     }
