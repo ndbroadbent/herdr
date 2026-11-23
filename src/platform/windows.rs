@@ -5456,3 +5456,14 @@ mod tests {
         }
     }
 }
+
+/// When the machine last booted, in seconds since the Unix epoch. Derived from the uptime,
+/// so it can drift by a second between calls.
+pub(crate) fn boot_time_unix_secs() -> Option<u64> {
+    // SAFETY: GetTickCount64 takes no arguments and cannot fail.
+    let uptime_ms = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    now.as_secs().checked_sub(uptime_ms / 1000)
+}

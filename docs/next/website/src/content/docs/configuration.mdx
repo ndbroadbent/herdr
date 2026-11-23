@@ -563,6 +563,8 @@ Automatic restores start one agent at a time, 100 milliseconds apart by default,
 
 Only panes with a valid native session reference from an official integration can resume; other panes restore as normal shells. See [Session state and restore](/docs/session-state/) for supported Agents and persistence behavior.
 
+To have herdr ask an agent to carry on when a restart stopped it in the middle of a turn, or when Codex's usage limit resets, turn on `[session.auto_continue]`. See [Auto-continue](/docs/session-state/#auto-continue).
+
 ## IME cursor tracking
 
 On macOS, AI Agent TUIs that hide the hardware cursor can prevent native input-method candidate windows from following the focused pane. Reveal a cursor anchor for those panes with:

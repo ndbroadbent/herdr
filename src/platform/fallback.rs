@@ -277,3 +277,8 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
 pub fn show_desktop_notification(_title: &str, _body: Option<&str>) -> std::io::Result<bool> {
     Ok(false)
 }
+
+/// When the machine last booted. Unknown on this platform.
+pub(crate) fn boot_time_unix_secs() -> Option<u64> {
+    None
+}

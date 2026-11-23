@@ -117,6 +117,18 @@ pub struct PaneSnapshot {
     /// restart doesn't make every agent look freshly changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_changed_at_unix_ms: Option<u64>,
+    /// The agent was in the middle of a turn when the server stopped, so it can be asked to
+    /// carry on once it's back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupted_turn: Option<InterruptedTurnSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InterruptedTurnSnapshot {
+    /// When the computer had booted, in seconds since the Unix epoch, to tell a reboot from a
+    /// restart of herdr alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_time_unix: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,6 +420,11 @@ fn capture_tab(
                 metadata_tokens,
                 state_changed_at_unix_ms: terminal
                     .and_then(|terminal| terminal.last_agent_state_change_unix_ms),
+                interrupted_turn: terminal
+                    .filter(|terminal| terminal.turn_interrupted_by_stop())
+                    .map(|_| InterruptedTurnSnapshot {
+                        boot_time_unix: crate::auto_continue::current_boot_time(),
+                    }),
             },
         );
     }
@@ -729,6 +746,7 @@ mod tests {
                 launch_argv: None,
                 metadata_tokens: Default::default(),
                 state_changed_at_unix_ms: None,
+                interrupted_turn: None,
             },
         );
         panes.insert(
@@ -743,6 +761,7 @@ mod tests {
                 launch_argv: None,
                 metadata_tokens: Default::default(),
                 state_changed_at_unix_ms: None,
+                interrupted_turn: None,
             },
         );
 
@@ -1431,6 +1450,7 @@ mod tests {
                 launch_argv: None,
                 metadata_tokens: Default::default(),
                 state_changed_at_unix_ms: None,
+                interrupted_turn: None,
             },
         );
         panes.insert(
@@ -1447,6 +1467,7 @@ mod tests {
                 launch_argv: None,
                 metadata_tokens: Default::default(),
                 state_changed_at_unix_ms: None,
+                interrupted_turn: None,
             },
         );
 

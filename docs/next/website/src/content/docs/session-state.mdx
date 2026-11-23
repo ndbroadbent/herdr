@@ -114,6 +114,36 @@ Unsupported, missing, invalid, duplicated, or stale session references restore a
 
 If native agent session restore applies to a pane, Herdr resumes the agent session instead of replaying saved pane history for that pane.
 
+## Auto-continue
+
+An agent that a restart stopped in the middle of a turn comes back idle: native agent session restore reopens its conversation, but the agent doesn't pick up the work by itself. Herdr can send it a message once it's back, saying why it stopped. It does the same for Codex when its usage limit resets. Auto-continue is off by default:
+
+```toml
+[session.auto_continue]
+enabled = true
+message = "Please continue where you left off. ({reason})"
+delay_seconds = 180
+```
+
+`{reason}` in the message becomes one of these:
+
+| Reason | When |
+| --- | --- |
+| `the computer restarted` | The agent was working when herdr stopped, and the computer has booted since |
+| `herdr restarted` | The agent was working when herdr stopped, on the same boot: `herdr server stop` and start, or `herdr restart --fresh` |
+| `your usage limit reset` | Codex ended a turn with "You've hit your usage limit" and a "Try again at" time, and that time has passed |
+
+How herdr decides to send it:
+
+- Only agents that were working when herdr began to stop, and that [native agent session restore](#native-agent-session-restore) brings back, get the message. An agent that was idle or waiting on a question doesn't, and neither does a shell.
+- `herdr restart` (a [live handoff](#live-handoff)) keeps agents running, so they don't need it.
+- Herdr relaunches restored agents once a client attaches, so after a reboot the wait starts when you first open herdr, or when a remote client attaches.
+- The agent must sit idle for `delay_seconds` before the message goes. A question on screen starts the wait again. If the agent starts working first, because you gave it something to do, the message is dropped. If it hasn't settled 15 minutes after the delay, herdr gives up.
+- For a usage limit, the message goes `delay_seconds` after the reset time. Codex prints that time in the computer's time zone. Claude Code waits out its own usage limits while it runs, so herdr only reads Codex's notice.
+- The message is submitted the way [`herdr agent prompt`](/docs/socket-api/#prompting-an-agent) submits one. `herdr-server.log` records each message sent or dropped, with the reason.
+
+Changes to `[session.auto_continue]` apply when herdr reloads its config; no restart is needed.
+
 ## Live handoff
 
 Live handoff is for update and remote attach flows that need to replace a running Herdr server. It asks the old server to transfer live panes to the new server, so pane processes can keep running across the server replacement.

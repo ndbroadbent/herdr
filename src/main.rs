@@ -15,6 +15,7 @@ mod agent_resume;
 mod agent_view_eval;
 mod api;
 mod app;
+mod auto_continue;
 mod build_info;
 mod checksum;
 mod cli;
@@ -408,6 +409,14 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # [session.resume_extra_args]
 # claude = ["--dangerously-skip-permissions"]
 # codex = ["--dangerously-bypass-approvals-and-sandbox"]
+
+# Ask agents to carry on when a restart or a usage limit interrupted their work.
+# {reason} is why it stopped: "the computer restarted", "herdr restarted" or
+# "your usage limit reset".
+# [session.auto_continue]
+# enabled = false
+# message = "Please continue where you left off. ({reason})"
+# delay_seconds = 180
 
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.

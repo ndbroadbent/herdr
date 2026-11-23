@@ -9,6 +9,7 @@ mod agent_resume;
 mod agent_suspend_tests;
 pub(crate) mod agent_view;
 mod agents;
+mod auto_continue;
 pub(crate) use agents::{AGENT_START_SETTLE_DELAY, MAX_AGENT_START_TIMEOUT};
 mod api;
 #[cfg(test)]
@@ -136,6 +137,7 @@ pub struct App {
     /// shutting down. Processes that exit from then on aren't reported as agents or tabs
     /// closing: the sessions carry on after a restart.
     pub(crate) stopping: bool,
+    pub(crate) auto_continue: auto_continue::AutoContinueState,
     pub(crate) next_api_worktree_operation_id: u64,
     pub(crate) next_auto_update_check: Option<Instant>,
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
@@ -582,6 +584,9 @@ impl App {
             terminal_runtime_shutdowns: Vec::new(),
         };
 
+        let restored_mid_turn = restored_terminals
+            .values()
+            .any(|terminal| terminal.auto_continue_reason.is_some());
         state.terminals = restored_terminals;
 
         // Background auto-update is disabled for non-persistent test apps
@@ -647,6 +652,10 @@ impl App {
             pending_worktree_remove_runtime_exits: HashMap::new(),
             pending_worktree_remove_runtime_restores: HashMap::new(),
             stopping: false,
+            auto_continue: auto_continue::AutoContinueState::new(
+                config.session.auto_continue.clone(),
+                restored_mid_turn,
+            ),
             next_api_worktree_operation_id: 1,
             next_auto_update_check: version_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
@@ -924,6 +933,10 @@ impl App {
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
             }
+        }
+
+        if !invalid_section("session") {
+            self.auto_continue.config = config.session.auto_continue.clone();
         }
 
         if !invalid_section("session")

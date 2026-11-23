@@ -2272,3 +2272,11 @@ mod tests {
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }
+
+/// When the machine last booted, in seconds since the Unix epoch.
+pub(crate) fn boot_time_unix_secs() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    stat.lines()
+        .find_map(|line| line.strip_prefix("btime "))
+        .and_then(|value| value.trim().parse().ok())
+}

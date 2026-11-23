@@ -183,6 +183,10 @@ pub struct TerminalState {
     agent_process_acquisition_pending: bool,
     pub pending_agent_resume_plan: Option<crate::agent_resume::AgentResumePlan>,
     pub restore_error: Option<String>,
+    /// The agent's state when the server began stopping, before its process could die.
+    pub state_at_stop: Option<AgentState>,
+    /// Restored from a session where the agent was in the middle of a turn: why it stopped.
+    pub auto_continue_reason: Option<crate::auto_continue::AutoContinueReason>,
 }
 
 impl TerminalState {
@@ -227,6 +231,8 @@ impl TerminalState {
             agent_process_acquisition_pending: false,
             pending_agent_resume_plan: None,
             restore_error: None,
+            state_at_stop: None,
+            auto_continue_reason: None,
         }
     }
 
@@ -2392,6 +2398,11 @@ impl TerminalState {
         self.agent_process_acquisition_pending = false;
         self.pending_agent_resume_plan = None;
         self.clear_agent_name();
+    }
+
+    /// The agent was in the middle of a turn when the server stopped.
+    pub(crate) fn turn_interrupted_by_stop(&self) -> bool {
+        self.state_at_stop == Some(AgentState::Working) && self.is_agent_terminal()
     }
 
     pub fn is_agent_terminal(&self) -> bool {

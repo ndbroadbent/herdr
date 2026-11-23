@@ -1422,3 +1422,36 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }
+
+/// When the machine last booted, in seconds since the Unix epoch.
+pub(crate) fn boot_time_unix_secs() -> Option<u64> {
+    let mut boot_time = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    let mut size = std::mem::size_of::<libc::timeval>();
+    // SAFETY: kern.boottime fills a timeval, and `size` holds its size.
+    let result = unsafe {
+        libc::sysctlbyname(
+            c"kern.boottime".as_ptr(),
+            (&mut boot_time as *mut libc::timeval).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (result == 0 && boot_time.tv_sec > 0).then_some(boot_time.tv_sec as u64)
+}
+
+#[cfg(test)]
+mod boot_time_tests {
+    #[test]
+    fn boot_time_is_in_the_past() {
+        let boot = super::boot_time_unix_secs().expect("kern.boottime");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(boot > 1_000_000_000 && boot <= now);
+    }
+}

@@ -168,6 +168,7 @@ impl App {
             self.agent_metadata_deadline,
             self.pending_agent_resume_deadline,
             self.session_save_deadline,
+            self.auto_continue.next_check,
             self.next_tab_bar_status_deadline(),
             render_deadline,
         ]

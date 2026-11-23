@@ -276,6 +276,8 @@ pub struct SessionConfig {
     /// Extra arguments inserted after the agent executable when resuming a
     /// native agent session, keyed by agent label. Default: empty.
     pub resume_extra_args: BTreeMap<String, Vec<String>>,
+    /// Asks agents to carry on after work was interrupted: by a restart, or by a usage limit.
+    pub auto_continue: AutoContinueConfig,
 }
 
 impl Default for SessionConfig {
@@ -284,6 +286,33 @@ impl Default for SessionConfig {
             resume_agents_on_restore: true,
             startup_per_agent_delay_ms: 100,
             resume_extra_args: BTreeMap::new(),
+            auto_continue: AutoContinueConfig::default(),
+        }
+    }
+}
+
+pub const DEFAULT_AUTO_CONTINUE_MESSAGE: &str = "Please continue where you left off. ({reason})";
+pub const DEFAULT_AUTO_CONTINUE_DELAY_SECONDS: u64 = 180;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct AutoContinueConfig {
+    /// Send the message to agents whose work was interrupted. Default: false.
+    pub enabled: bool,
+    /// The message. `{reason}` stands for why the work stopped, such as
+    /// "the computer restarted".
+    pub message: String,
+    /// Seconds to wait before sending it: after a restarted agent is back at its prompt, or
+    /// after a usage limit resets. Default: 180.
+    pub delay_seconds: u64,
+}
+
+impl Default for AutoContinueConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            message: DEFAULT_AUTO_CONTINUE_MESSAGE.to_string(),
+            delay_seconds: DEFAULT_AUTO_CONTINUE_DELAY_SECONDS,
         }
     }
 }
@@ -1465,6 +1494,25 @@ startup_per_agent_delay_ms = 0
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
         assert_eq!(config.session.startup_per_agent_delay_ms, 0);
+    }
+
+    #[test]
+    fn auto_continue_defaults_off_and_parses() {
+        let default_config = Config::default().session.auto_continue;
+        assert!(!default_config.enabled);
+        assert!(default_config.message.contains("{reason}"));
+        assert_eq!(default_config.delay_seconds, 180);
+
+        let toml = r#"
+[session.auto_continue]
+enabled = true
+delay_seconds = 60
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let auto_continue = config.session.auto_continue;
+        assert!(auto_continue.enabled);
+        assert_eq!(auto_continue.delay_seconds, 60);
+        assert_eq!(auto_continue.message, DEFAULT_AUTO_CONTINUE_MESSAGE);
     }
 
     #[test]

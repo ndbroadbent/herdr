@@ -226,7 +226,7 @@ impl HeadlessServer {
 
     pub(super) fn finish_live_handoff_shutdown(&mut self) {
         self.shutting_down = true;
-        self.app.stopping = true;
+        self.app.begin_stopping();
         self.app.state.should_quit = true;
         self.app.policy.persist_session = false;
         info!("live handoff completed; old server exiting");
@@ -315,7 +315,7 @@ impl HeadlessServer {
         };
         info!(%reason, "server shutdown initiated");
         self.shutting_down = true;
-        self.app.stopping = true;
+        self.app.begin_stopping();
 
         // Clear client-local host graphics, then send ServerShutdown to all connected clients.
         let shutdown_msg = ServerMessage::ServerShutdown {

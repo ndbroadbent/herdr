@@ -606,6 +606,14 @@ fn restore_tab(
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
             terminal.metadata_tokens = saved_metadata_tokens;
+            terminal.auto_continue_reason = saved_pane
+                .and_then(|pane| pane.interrupted_turn.as_ref())
+                .map(|turn| {
+                    crate::auto_continue::restart_reason(
+                        turn.boot_time_unix,
+                        crate::auto_continue::current_boot_time(),
+                    )
+                });
             terminal.restore_agent_state_change_time(saved_state_changed_at);
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
@@ -1586,6 +1594,7 @@ mod tests {
                             launch_argv: None,
                             metadata_tokens: Default::default(),
                             state_changed_at_unix_ms: None,
+                            interrupted_turn: None,
                         },
                     )]),
                     zoomed: false,
@@ -1670,6 +1679,7 @@ mod tests {
                                 launch_argv: None,
                                 metadata_tokens: Default::default(),
                                 state_changed_at_unix_ms: None,
+                                interrupted_turn: None,
                             },
                         ),
                         (
@@ -1684,6 +1694,7 @@ mod tests {
                                 launch_argv: None,
                                 metadata_tokens: Default::default(),
                                 state_changed_at_unix_ms: None,
+                                interrupted_turn: None,
                             },
                         ),
                     ]),
@@ -1740,6 +1751,7 @@ mod tests {
                     launch_argv: None,
                     metadata_tokens: Default::default(),
                     state_changed_at_unix_ms: None,
+                    interrupted_turn: None,
                 },
             )
         };
@@ -1758,6 +1770,7 @@ mod tests {
             launch_argv: None,
             metadata_tokens: Default::default(),
             state_changed_at_unix_ms: None,
+            interrupted_turn: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1879,6 +1892,102 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
+    async fn an_agent_restored_mid_turn_is_asked_to_continue() {
+        use super::super::snapshot::InterruptedTurnSnapshot;
+        use crate::auto_continue::AutoContinueReason;
+
+        let restored_reason = |interrupted_turn: Option<InterruptedTurnSnapshot>| {
+            let cwd = std::env::current_dir().unwrap();
+            let snapshot = SessionSnapshot {
+                version: super::super::snapshot::SNAPSHOT_VERSION,
+                workspaces: vec![WorkspaceSnapshot {
+                    id: Some("workspace".into()),
+                    custom_name: None,
+                    identity_cwd: cwd.clone(),
+                    worktree_space: None,
+                    public_pane_numbers: HashMap::new(),
+                    next_public_pane_number: 0,
+                    public_tab_numbers: Vec::new(),
+                    next_public_tab_number: 0,
+                    tabs: vec![TabSnapshot {
+                        custom_name: None,
+                        layout: LayoutSnapshot::Pane(0),
+                        panes: HashMap::from([(
+                            0,
+                            super::super::snapshot::PaneSnapshot {
+                                cwd,
+                                label: None,
+                                agent_name: None,
+                                managed_agent_kind: None,
+                                agent_session: Some(
+                                    super::super::snapshot::PaneAgentSessionSnapshot {
+                                        source: "herdr:codex".into(),
+                                        agent: "codex".into(),
+                                        kind: crate::agent_resume::AgentSessionRefKind::Id,
+                                        value: "codex-session".into(),
+                                    },
+                                ),
+                                agent_resume: None,
+                                launch_argv: None,
+                                metadata_tokens: Default::default(),
+                                state_changed_at_unix_ms: None,
+                                interrupted_turn: interrupted_turn.clone(),
+                            },
+                        )]),
+                        zoomed: false,
+                        focused: Some(0),
+                        root_pane: Some(0),
+                    }],
+                    active_tab: 0,
+                }],
+                active: Some(0),
+                selected: 0,
+                sidebar_width: None,
+                sidebar_section_split: None,
+                collapsed_space_keys: Default::default(),
+            };
+            let (events, _event_rx) = mpsc::channel(4);
+
+            let (_workspaces, terminals, _runtimes) = restore(
+                &snapshot,
+                None,
+                24,
+                80,
+                0,
+                test_restore_shell(),
+                crate::config::ShellModeConfig::NonLogin,
+                true,
+                events,
+                Arc::new(Notify::new()),
+                Arc::new(RenderSignal::new()),
+            );
+            terminals
+                .values()
+                .next()
+                .expect("native agent restore should create terminal state")
+                .auto_continue_reason
+        };
+
+        assert_eq!(restored_reason(None), None);
+        let booted = crate::auto_continue::current_boot_time();
+        assert_eq!(
+            restored_reason(Some(InterruptedTurnSnapshot {
+                boot_time_unix: booted
+            })),
+            Some(AutoContinueReason::HerdrRestarted)
+        );
+        if let Some(booted) = booted {
+            assert_eq!(
+                restored_reason(Some(InterruptedTurnSnapshot {
+                    boot_time_unix: Some(booted - 3600)
+                })),
+                Some(AutoContinueReason::ComputerRestarted)
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
     async fn native_agent_restore_defers_runtime_launch() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = SessionSnapshot {
@@ -1912,6 +2021,7 @@ mod tests {
                             launch_argv: None,
                             metadata_tokens: Default::default(),
                             state_changed_at_unix_ms: None,
+                            interrupted_turn: None,
                         },
                     )]),
                     zoomed: false,
@@ -2220,6 +2330,7 @@ mod tests {
                 launch_argv: None,
                 metadata_tokens: Default::default(),
                 state_changed_at_unix_ms: None,
+                interrupted_turn: None,
             },
         );
         let mut history = SessionHistorySnapshot {
@@ -2306,6 +2417,7 @@ mod tests {
                                 ("pr".to_string(), "#12".to_string()),
                             ]),
                             state_changed_at_unix_ms: Some(1_700_000_000_000),
+                            interrupted_turn: None,
                         },
                     )]),
                     zoomed: false,

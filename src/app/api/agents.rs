@@ -137,6 +137,17 @@ impl App {
     }
 
     /// Runs every check that can reject a prompt without touching the pane.
+    /// Submits `text` to an agent the way `agent prompt` does, without waiting for it to land.
+    pub(crate) fn send_agent_prompt(&mut self, target: String, text: String) -> Result<(), String> {
+        let params = AgentPromptParams {
+            target,
+            text,
+            wait: None,
+        };
+        let validated = self.validate_agent_prompt(String::new(), &params)?;
+        self.submit_agent_prompt(validated, &params).map(|_| ())
+    }
+
     fn validate_agent_prompt(
         &self,
         id: String,

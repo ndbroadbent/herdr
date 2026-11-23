@@ -804,6 +804,7 @@ impl App {
         };
         let workspace_id = self.public_workspace_id(update.ws_idx);
         let (tab_id, tab_label) = self.pane_tab_ref(update.ws_idx, update.pane_id);
+        self.note_agent_state_change_for_auto_continue(update);
 
         if update.agent_name_changed {
             self.emit_pane_updated(update.ws_idx, update.pane_id);

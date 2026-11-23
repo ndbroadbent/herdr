@@ -643,7 +643,7 @@ impl HeadlessServer {
             };
 
             if self.should_quit.load(Ordering::Acquire) || self.host_shutdown_requested() {
-                self.app.stopping = true;
+                self.app.begin_stopping();
                 match event {
                     LoopEvent::Internal(ev) => {
                         self.handle_internal_event_with_forwarding(ev);
@@ -3367,6 +3367,15 @@ impl HeadlessServer {
         }
 
         changed |= self.app.handle_tab_bar_status_tasks(now);
+
+        if self
+            .app
+            .auto_continue
+            .next_check
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.app.run_auto_continue(now);
+        }
 
         if geometry_dirty {
             self.app.pending_agent_resume_deadline = None;
