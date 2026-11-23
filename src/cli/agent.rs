@@ -522,6 +522,15 @@ fn agent_attach(args: &[String]) -> std::io::Result<i32> {
             Err(code) => return Ok(code),
         };
 
+    // On a saved machine, its own Herdr attaches inside an SSH terminal.
+    if super::target::is_remote() {
+        let mut attach_args = vec!["agent".to_owned(), "attach".to_owned(), target];
+        if takeover {
+            attach_args.push("--takeover".to_owned());
+        }
+        return super::target::run_attach_on_machine(attach_args);
+    }
+
     let response = resolve_agent_target(&target, "cli:agent:attach:resolve")?;
     if response.get("error").is_some() {
         eprintln!("{}", serde_json::to_string(&response).unwrap());

@@ -63,6 +63,33 @@ pub(super) fn is_remote() -> bool {
     TARGET.with(|target| target.borrow().is_some())
 }
 
+/// Runs a direct attach on the machine this command targets, in this terminal over SSH.
+pub(super) fn run_attach_on_machine(attach_args: Vec<String>) -> io::Result<i32> {
+    let profile = TARGET
+        .with(|target| {
+            target
+                .borrow()
+                .as_ref()
+                .map(|target| target.profile.clone())
+        })
+        .ok_or_else(|| io::Error::other("no machine selected"))?;
+    crate::remote::run_saved_terminal_attach(
+        profile.id.as_str(),
+        &profile.target,
+        &profile.session,
+        &attach_args,
+    )
+    .map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "machine '{}' (session {}): {error}",
+                profile.label, profile.session
+            ),
+        )
+    })
+}
+
 pub(super) fn api_client() -> io::Result<ApiClient> {
     TARGET.with(|target| {
         let mut target = target.borrow_mut();
@@ -290,11 +317,10 @@ fn validate_machine_command(args: &[String]) -> Result<(), String> {
     let supported = match command {
         "workspace" | "worktree" | "tab" | "pane" | "notification" => true,
         "agent" => {
-            subcommand != "attach"
-                && !(subcommand == "explain"
-                    && args[3..]
-                        .iter()
-                        .any(|arg| arg == "--file" || arg.starts_with("--file=")))
+            !(subcommand == "explain"
+                && args[3..]
+                    .iter()
+                    .any(|arg| arg == "--file" || arg.starts_with("--file=")))
         }
         "api" => subcommand == "snapshot",
         "status" => subcommand == "server",
@@ -435,14 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn machine_commands_reject_local_side_effects_and_tui_attach() {
+    fn machine_commands_reject_local_side_effects_and_allow_agent_attach() {
         for command in [
             &["update"][..],
             &["config", "reset-keys"],
             &["machine", "remove", "mac"],
             &["session", "delete", "default"],
             &["server", "live-handoff"],
-            &["agent", "attach", "w4:p1"],
             &["terminal", "attach", "w4:p1"],
             &["terminal", "session", "control", "w4:p1"],
             &["plugin", "install", "./plugin"],
@@ -456,6 +481,7 @@ mod tests {
         }
         for command in [
             &["agent", "list"][..],
+            &["agent", "attach", "w4:p1"],
             &["agent", "wait", "w4:p1"],
             &["pane", "split", "w4:p1", "--direction", "right"],
             &["workspace", "list"],

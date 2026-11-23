@@ -834,6 +834,15 @@ impl RemoteSsh {
         command
     }
 
+    /// An interactive `ssh -t` that runs `remote_command` in a terminal on the machine, with
+    /// the managed connection options but none of the background-only ones, so SSH can still
+    /// ask for a passphrase or host key.
+    pub(super) fn terminal_command(&self, remote_command: &str) -> Command {
+        let mut command = self.base_command();
+        command.arg("-t").arg(&self.target).arg(remote_command);
+        command
+    }
+
     fn base_command(&self) -> Command {
         let mut command = Command::new("ssh");
         apply_managed_ssh_options(&mut command, self.options());
@@ -2680,6 +2689,23 @@ exit 2"#,
 }
 
 pub(super) const STALE_API_METADATA: &str = "herdr-machine-metadata-stale-v1";
+
+/// The remote command that runs `herdr <args>` against `session` in the SSH terminal, where
+/// `args` is a direct attach such as `agent attach w1:p2`.
+pub(super) fn remote_terminal_attach_command(
+    metadata: &crate::client::endpoint::SshMachineMetadata,
+    session: &str,
+    args: &[String],
+) -> String {
+    let mut words = vec![
+        "exec".to_owned(),
+        shell_quote(&metadata.executable),
+        "--session".to_owned(),
+        shell_quote(session),
+    ];
+    words.extend(args.iter().map(|arg| shell_quote(arg)));
+    format!("/bin/sh -c {}", shell_quote(&words.join(" ")))
+}
 
 pub(super) fn cached_remote_api_command(
     metadata: &crate::client::endpoint::SshMachineMetadata,
@@ -4648,6 +4674,35 @@ mod tests {
                 .unwrap()
                 .executable,
             path
+        );
+    }
+
+    #[test]
+    fn a_machine_attach_runs_the_machines_own_herdr_in_its_session() {
+        let command = remote_terminal_attach_command(
+            &crate::client::endpoint::SshMachineMetadata {
+                os: "linux".into(),
+                executable: "/home/me/.local/bin/herdr".into(),
+            },
+            "agents",
+            &[
+                "agent".into(),
+                "attach".into(),
+                "email triage".into(),
+                "--takeover".into(),
+            ],
+        );
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "set -- {}; printf '%s\\n' \"$2\"",
+                command.trim_start_matches("/bin/sh ")
+            ))
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "exec /home/me/.local/bin/herdr --session agents agent attach 'email triage' --takeover\n"
         );
     }
 

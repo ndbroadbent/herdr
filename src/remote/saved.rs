@@ -152,6 +152,54 @@ fn saved_bridge_path(profile_id: &str) -> PathBuf {
     crate::platform::remote_bridge_endpoint_path(&readable, &short)
 }
 
+/// The exit status `sh` gives when the command to run doesn't exist.
+const COMMAND_NOT_FOUND: i32 = 127;
+
+/// Runs a direct attach (`agent attach <target>`) on a saved machine, in this terminal over
+/// `ssh -t`, and returns its exit code. The machine's own Herdr does the attach, so the client
+/// and server versions don't need to share a terminal protocol.
+pub(crate) fn run_saved_terminal_attach(
+    profile_id: &str,
+    target: &str,
+    session: &str,
+    attach_args: &[String],
+) -> io::Result<i32> {
+    let ssh = validated_saved_ssh(profile_id, target, session)?;
+    let metadata_cache =
+        crate::client::endpoint::SshMetadataCache::new(profile_id, target, session)?;
+    let mut used_cached_metadata = true;
+    let mut metadata = match metadata_cache.load() {
+        Some(metadata) => metadata,
+        None => {
+            used_cached_metadata = false;
+            let metadata = super::attach::discover_remote_api_metadata(&ssh, session)?;
+            metadata_cache.store(&metadata);
+            metadata
+        }
+    };
+    loop {
+        if metadata.os == "windows" {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "direct terminal attach is not supported on Windows machines yet",
+            ));
+        }
+        let command =
+            super::attach::remote_terminal_attach_command(&metadata, session, attach_args);
+        let status = ssh.terminal_command(&command).status()?;
+        // A cached executable that has moved never started, so nothing was attached: find it
+        // again and retry once.
+        if status.code() == Some(COMMAND_NOT_FOUND) && used_cached_metadata {
+            metadata_cache.invalidate();
+            used_cached_metadata = false;
+            metadata = super::attach::discover_remote_api_metadata(&ssh, session)?;
+            metadata_cache.store(&metadata);
+            continue;
+        }
+        return Ok(status.code().unwrap_or(1));
+    }
+}
+
 fn validated_saved_ssh(profile_id: &str, target: &str, session: &str) -> io::Result<RemoteSsh> {
     validate_profile_path_id(profile_id)?;
     crate::session::validate_name(session)
