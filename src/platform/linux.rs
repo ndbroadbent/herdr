@@ -29,6 +29,9 @@ mod config_file_tests;
 mod shutdown;
 pub(crate) use shutdown::monitor_host_shutdown;
 
+mod supervisor;
+pub(crate) use supervisor::start_supervised_server;
+
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
 const PROCESS_DETECTION_ENV_VAR: &str = "HERDR_PROCESS_DETECTION";
 const CHILD_GROUPS_SCAN_LIMIT: usize = 64;

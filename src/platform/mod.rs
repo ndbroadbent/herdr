@@ -285,6 +285,13 @@ pub fn launch_server_daemon_command(command: &mut std::process::Command) -> std:
     command.spawn().map(|child| child.id())
 }
 
+/// Starts the server through the platform's service manager when the user runs it as a service.
+/// Only Linux has one (the `herdr.service` systemd user unit); elsewhere the caller spawns it.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn start_supervised_server() -> std::io::Result<bool> {
+    Ok(false)
+}
+
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn prepare_server_process(_handoff_import: bool) -> std::io::Result<bool> {
     Ok(false)

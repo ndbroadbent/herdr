@@ -201,6 +201,30 @@ fn validate_running_server_compatibility(saved_federation: bool) -> io::Result<(
 ///   this CLI invocation explicitly selected a session.
 ///
 /// Returns the PID of the spawned server process.
+/// Starts a server for a client that found none running: through the user's service manager when
+/// the default server runs as a service there (systemd's `herdr.service` on Linux), so it stays
+/// supervised, and otherwise as a daemon of our own. A named session or a socket override is never
+/// the service's server, so those always spawn their own.
+pub(crate) fn start_server_for_attach() -> io::Result<()> {
+    if may_use_supervised_server(
+        crate::session::explicit_session_requested(),
+        std::env::var_os(crate::api::SOCKET_PATH_ENV_VAR).is_some(),
+        std::env::var_os(super::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR).is_some(),
+    ) && crate::platform::start_supervised_server()?
+    {
+        return Ok(());
+    }
+    spawn_server_daemon().map(|_| ())
+}
+
+fn may_use_supervised_server(
+    explicit_session: bool,
+    socket_override: bool,
+    client_socket_override: bool,
+) -> bool {
+    !explicit_session && !socket_override && !client_socket_override
+}
+
 pub fn spawn_server_daemon() -> io::Result<u32> {
     let exe = std::env::current_exe().map_err(|err| {
         io::Error::new(
@@ -323,8 +347,8 @@ pub fn auto_detect_launch(saved_federation: bool) -> io::Result<()> {
                 validate_running_server_compatibility(false)
             }
         } else {
-            info!("no server running, spawning server daemon");
-            spawn_server_daemon()
+            info!("no server running, starting one");
+            start_server_for_attach()
                 .and_then(|_| wait_for_server_socket(&socket_path, SERVER_READY_TIMEOUT))
         }
     });
@@ -415,6 +439,14 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn only_the_default_server_is_started_through_the_service_manager() {
+        assert!(may_use_supervised_server(false, false, false));
+        assert!(!may_use_supervised_server(true, false, false));
+        assert!(!may_use_supervised_server(false, true, false));
+        assert!(!may_use_supervised_server(false, false, true));
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
