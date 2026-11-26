@@ -5,6 +5,16 @@ use ratatui::layout::Rect;
 
 use super::App;
 
+/// Resume order: the focused pane of the tab on screen, then that tab's other panes, then the
+/// rest. `focused` is the focused pane when this pane's tab is the one on screen.
+fn resume_priority(focused: Option<crate::layout::PaneId>, pane_id: crate::layout::PaneId) -> u8 {
+    match focused {
+        Some(focused) if focused == pane_id => 0,
+        Some(_) => 1,
+        None => 2,
+    }
+}
+
 struct PendingAgentResumeCandidate {
     pane_id: crate::layout::PaneId,
     terminal_id: crate::terminal::TerminalId,
@@ -104,7 +114,9 @@ impl App {
 
         let mut pending = Vec::new();
         for (ws_idx, ws) in self.state.workspaces.iter().enumerate() {
+            let active_tab = (self.state.active == Some(ws_idx)).then(|| ws.active_tab_index());
             for (tab_idx, tab) in ws.tabs.iter().enumerate() {
+                let focused = (active_tab == Some(tab_idx)).then(|| tab.layout.focused());
                 for info in
                     self.pending_agent_resume_pane_infos(ws_idx, tab_idx, tab, terminal_area)
                 {
@@ -125,18 +137,29 @@ impl App {
                     let Some(plan) = terminal.pending_agent_resume_plan.clone() else {
                         continue;
                     };
-                    pending.push(PendingAgentResumeCandidate {
-                        pane_id: info.id,
-                        terminal_id: pane.attached_terminal_id.clone(),
-                        cwd: terminal.cwd.clone(),
-                        plan,
-                        rows: info.inner_rect.height,
-                        cols: info.inner_rect.width,
-                    });
+                    let priority = resume_priority(focused, info.id);
+                    pending.push((
+                        priority,
+                        PendingAgentResumeCandidate {
+                            pane_id: info.id,
+                            terminal_id: pane.attached_terminal_id.clone(),
+                            cwd: terminal.cwd.clone(),
+                            plan,
+                            rows: info.inner_rect.height,
+                            cols: info.inner_rect.width,
+                        },
+                    ));
                 }
             }
         }
+        // The tab on screen resumes first, its focused pane before the rest, then every other
+        // tab in sidebar order. The queue is rebuilt at each slot, so switching tabs while
+        // agents are still resuming moves the new tab to the front.
+        pending.sort_by_key(|(priority, _)| *priority);
         pending
+            .into_iter()
+            .map(|(_, candidate)| candidate)
+            .collect()
     }
 
     fn pending_agent_resume_pane_infos(
@@ -394,6 +417,69 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[tokio::test]
+    async fn pending_agent_resumes_start_with_the_tab_on_screen_and_follow_tab_switches() {
+        let config: crate::config::Config =
+            toml::from_str("[session]\nstartup_per_agent_delay_ms = 100").unwrap();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = (0..4)
+            .map(|_| crate::workspace::Workspace::test_new("restore"))
+            .collect();
+        app.state.active = Some(2);
+        app.state.view.terminal_area = Rect::new(0, 0, 100, 30);
+        app.state.ensure_test_terminals();
+        // A missing directory makes each resume fail at once with a restore error, which marks
+        // the order without spawning anything.
+        let missing = std::env::current_dir()
+            .unwrap()
+            .join("__missing_resume_cwd__");
+        assert!(!missing.exists());
+        for terminal in app.state.terminals.values_mut() {
+            terminal.cwd = missing.clone();
+            terminal.pending_agent_resume_plan = Some(crate::agent_resume::AgentResumePlan {
+                agent: "claude".into(),
+                argv: vec!["claude".into()],
+                dedupe_key: terminal.id.to_string(),
+            });
+        }
+        let terminal_of = |app: &App, ws_idx: usize| {
+            let tab = &app.state.workspaces[ws_idx].tabs[0];
+            tab.panes[&tab.layout.focused()]
+                .attached_terminal_id
+                .clone()
+        };
+        let resumed = |app: &App, ws_idx: usize| {
+            app.state.terminals[&terminal_of(app, ws_idx)]
+                .restore_error
+                .is_some()
+        };
+
+        let now = Instant::now();
+        assert!(app.start_pending_agent_resumes(now, true));
+        assert!(resumed(&app, 2));
+        assert!(!resumed(&app, 0) && !resumed(&app, 1) && !resumed(&app, 3));
+
+        // Switching tabs before the next slot moves the new tab to the front of the queue.
+        app.state.active = Some(3);
+        let next = now + std::time::Duration::from_millis(100);
+        assert!(app.start_pending_agent_resumes(next, true));
+        assert!(resumed(&app, 3));
+        assert!(!resumed(&app, 0) && !resumed(&app, 1));
+
+        // The rest follow in sidebar order.
+        let later = next + std::time::Duration::from_millis(100);
+        assert!(app.start_pending_agent_resumes(later, true));
+        assert!(resumed(&app, 0));
+        assert!(!resumed(&app, 1));
     }
 
     #[tokio::test]
