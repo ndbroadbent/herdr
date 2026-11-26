@@ -1171,7 +1171,11 @@ fn a_claude_hook_that_settings_dont_call_is_outdated_until_reinstalled() {
     assert_eq!(status(), IntegrationStatusKind::Current);
 
     // Something rewrote settings.json without herdr's hooks; the script is still current.
-    fs::write(home.join(".claude").join("settings.json"), "{\"model\": \"opus\"}\n").unwrap();
+    fs::write(
+        home.join(".claude").join("settings.json"),
+        "{\"model\": \"opus\"}\n",
+    )
+    .unwrap();
     assert_eq!(status(), IntegrationStatusKind::Outdated);
 
     install_claude().unwrap();

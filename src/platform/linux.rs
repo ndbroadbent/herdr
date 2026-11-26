@@ -872,11 +872,6 @@ pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
 }
 
 /// `herdr://` links are only handled on macOS so far.
-pub fn link_handler_path() -> Option<std::path::PathBuf> {
-    None
-}
-
-/// `herdr://` links are only handled on macOS so far.
 pub fn install_link_handler(_herdr: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -1250,6 +1245,14 @@ fn process_session_id(pid: u32) -> Option<i32> {
     let rest = stat.get(stat.rfind(')')? + 2..)?;
     let fields: Vec<&str> = rest.split_whitespace().collect();
     fields.get(3)?.parse().ok()
+}
+
+/// When the machine last booted, in seconds since the Unix epoch.
+pub(crate) fn boot_time_unix_secs() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    stat.lines()
+        .find_map(|line| line.strip_prefix("btime "))
+        .and_then(|value| value.trim().parse().ok())
 }
 
 #[cfg(test)]
@@ -2289,12 +2292,4 @@ mod tests {
         assert!(argv[2].contains("EDITOR:-vi"));
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
-}
-
-/// When the machine last booted, in seconds since the Unix epoch.
-pub(crate) fn boot_time_unix_secs() -> Option<u64> {
-    let stat = std::fs::read_to_string("/proc/stat").ok()?;
-    stat.lines()
-        .find_map(|line| line.strip_prefix("btime "))
-        .and_then(|value| value.trim().parse().ok())
 }
