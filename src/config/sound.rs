@@ -10,6 +10,8 @@ use super::io::resolve_config_relative_path;
 #[serde(default)]
 pub struct SoundConfig {
     pub enabled: bool,
+    /// Stay quiet while the computer's screen is locked (macOS only so far).
+    pub mute_while_screen_locked: bool,
     /// Optional mp3 file path used for all notification sounds.
     /// Relative paths are resolved from the config file's directory.
     pub path: Option<PathBuf>,
@@ -155,6 +157,7 @@ impl Default for SoundConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            mute_while_screen_locked: false,
             path: None,
             done_path: None,
             request_path: None,
@@ -227,6 +230,14 @@ claude = "on"
         assert_eq!(config.ui.sound.agents.claude, AgentSoundSetting::On);
         assert_eq!(config.ui.sound.agents.pi, AgentSoundSetting::Default);
         assert_eq!(config.ui.sound.agents.letta, AgentSoundSetting::Default);
+    }
+
+    #[test]
+    fn mute_while_screen_locked_is_off_unless_set() {
+        let config: Config = toml::from_str("[ui.sound]\nenabled = true").unwrap();
+        assert!(!config.ui.sound.mute_while_screen_locked);
+        let config: Config = toml::from_str("[ui.sound]\nmute_while_screen_locked = true").unwrap();
+        assert!(config.ui.sound.mute_while_screen_locked);
     }
 
     #[test]

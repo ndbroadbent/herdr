@@ -512,6 +512,8 @@ request_path = "sounds/request.mp3"
 
 `path` sets one sound for all sound notifications. `done_path` and `request_path` override only the finished and needs-input sounds.
 
+On macOS, `mute_while_screen_locked = true` under `[ui.sound]` keeps Herdr quiet while the screen is locked, or while another user is switched in. Herdr checks the lock each time it would play a sound.
+
 Per-agent sound overrides accept `default`, `on`, or `off`. Use detected agent labels such as `claude`, `codex`, `devin`, or `droid` as keys. Droid is muted by default.
 
 ```toml

@@ -42,6 +42,9 @@ pub fn play(sound: Sound, config: &crate::config::SoundConfig) {
     if sound_playback_disabled_by_env() {
         return;
     }
+    if config.mute_while_screen_locked && crate::platform::screen_locked() {
+        return;
+    }
 
     let custom_path = config.path_for(sound);
     std::thread::spawn(move || {

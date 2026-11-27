@@ -285,6 +285,74 @@ extern "C" {
     ) -> libc::c_int;
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    #[link_name = "CGSessionCopyCurrentDictionary"]
+    fn cg_session_copy_current_dictionary() -> CfTypeRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    #[link_name = "kCFBooleanTrue"]
+    static CF_BOOLEAN_TRUE: CfTypeRef;
+
+    #[link_name = "kCFBooleanFalse"]
+    static CF_BOOLEAN_FALSE: CfTypeRef;
+
+    #[link_name = "CFStringCreateWithCString"]
+    fn cf_string_create_with_c_string(
+        allocator: CfTypeRef,
+        c_str: *const libc::c_char,
+        encoding: u32,
+    ) -> CfStringRef;
+
+    #[link_name = "CFDictionaryGetValue"]
+    fn cf_dictionary_get_value(dictionary: CfTypeRef, key: CfTypeRef) -> CfTypeRef;
+}
+
+const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+/// Whether the login session's screen is locked, or the session isn't the one on the console
+/// (another user switched in). A process outside the GUI session (over SSH) has no session
+/// dictionary, and counts as unlocked.
+pub(crate) fn screen_locked() -> bool {
+    // SAFETY: CGSessionCopyCurrentDictionary returns an owned dictionary or null.
+    let session = unsafe { cg_session_copy_current_dictionary() };
+    if session.is_null() {
+        return false;
+    }
+    let locked = session_flag(session, c"CGSSessionScreenIsLocked") == Some(true)
+        || session_flag(session, c"kCGSSessionOnConsoleKey") == Some(false);
+    // SAFETY: `session` is an owned, non-null CF object from the copy call above.
+    unsafe { cf_release(session) };
+    locked
+}
+
+/// Reads a boolean from the session dictionary: `None` when the key is absent or not a boolean.
+fn session_flag(session: CfTypeRef, key: &std::ffi::CStr) -> Option<bool> {
+    // SAFETY: `key` is a NUL-terminated UTF-8 string; the returned CFString is owned and released
+    // below. CFDictionaryGetValue returns a borrowed value (no release) or null. The boolean
+    // constants are framework-owned.
+    unsafe {
+        let key =
+            cf_string_create_with_c_string(std::ptr::null(), key.as_ptr(), CF_STRING_ENCODING_UTF8);
+        if key.is_null() {
+            return None;
+        }
+        let value = cf_dictionary_get_value(session, key);
+        cf_release(key);
+        if value.is_null() {
+            None
+        } else if cf_equal(value, CF_BOOLEAN_TRUE) != 0 {
+            Some(true)
+        } else if cf_equal(value, CF_BOOLEAN_FALSE) != 0 {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
 /// Pump the main thread's run loop once (non-blocking) so the process receives the
 /// `kTISNotifySelectedKeyboardInputSourceChanged` notification and refreshes the per-process cache
 /// that `TISCopyCurrentKeyboardInputSource` reads. That notification arrives only via the main
