@@ -29,7 +29,12 @@ pub(super) fn render_collapsed(
                 .fg(if row.stale {
                     config.palette.overlay0
                 } else {
-                    agent_status_color(row.agent.status, row.agent.inactive, &config.palette)
+                    agent_status_color(
+                        row.agent.status,
+                        row.agent.inactive,
+                        row.agent.muted,
+                        &config.palette,
+                    )
                 })
                 .add_modifier(if row.stale {
                     Modifier::DIM

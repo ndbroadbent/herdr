@@ -16,6 +16,7 @@ pub(super) struct AgentRow {
     pub(super) tab_id: Option<String>,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) inactive: bool,
+    pub(super) muted: bool,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
     /// Finished within the last minute, so its dot can stand out from older done agents.
@@ -336,6 +337,7 @@ pub(super) fn agent_row(
         tab_id: None,
         status: agent.agent_status,
         inactive: super::attention::is_marked_inactive(agent),
+        muted: super::attention::is_muted(agent),
         focused: agent.focused,
         rows,
         recent_done: age.recent_done,
@@ -440,6 +442,7 @@ fn tab_rows_without_agents(
             tab_id: Some(tab.tab_id.clone()),
             status: crate::api::schema::AgentStatus::Unknown,
             inactive: false,
+            muted: false,
             focused: tab.focused,
             rows: crate::ui::sidebar_tab_rows(&config.agents, &tab.label),
             recent_done: false,
@@ -487,7 +490,7 @@ pub(super) fn render_agent_row(
             .then_some(config.agents.recent_done_color.as_deref())
             .flatten()
             .map_or_else(
-                || agent_status_color(row.status, row.inactive, palette),
+                || agent_status_color(row.status, row.inactive, row.muted, palette),
                 crate::config::parse_color,
             );
         (

@@ -259,25 +259,30 @@ rows = [["state_icon", { token = "$pr", link = "$pr_url" }, "agent"]]
 #[test]
 fn only_an_idle_session_shows_the_inactive_grey() {
     let palette = crate::app::state::Palette::catppuccin();
-    assert_eq!(
-        super::super::agent_status_color(AgentStatus::Idle, true, &palette),
-        palette.overlay0
-    );
-    assert_ne!(
-        super::super::agent_status_color(AgentStatus::Idle, false, &palette),
-        palette.overlay0
-    );
+    let color =
+        |status, inactive| super::super::agent_status_color(status, inactive, false, &palette);
+    assert_eq!(color(AgentStatus::Idle, true), palette.overlay0);
+    assert_ne!(color(AgentStatus::Idle, false), palette.overlay0);
     for status in [
         AgentStatus::Working,
         AgentStatus::Blocked,
         AgentStatus::Done,
     ] {
-        assert_eq!(
-            super::super::agent_status_color(status, true, &palette),
-            super::super::agent_status_color(status, false, &palette),
-            "{status:?}"
-        );
+        assert_eq!(color(status, true), color(status, false), "{status:?}");
     }
+}
+
+#[test]
+fn an_idle_muted_session_is_white_not_green() {
+    let palette = crate::app::state::Palette::catppuccin();
+    let color = |status, inactive, muted| {
+        super::super::agent_status_color(status, inactive, muted, &palette)
+    };
+    assert_eq!(color(AgentStatus::Idle, false, true), palette.text);
+    assert_eq!(color(AgentStatus::Idle, false, false), palette.green);
+    // Wrapped up wins: a muted session marked inactive is grey.
+    assert_eq!(color(AgentStatus::Idle, true, true), palette.overlay0);
+    assert_eq!(color(AgentStatus::Working, false, true), palette.yellow);
 }
 
 #[test]

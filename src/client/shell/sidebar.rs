@@ -169,6 +169,7 @@ pub(crate) fn render_collapsed_sidebar(
             Style::default().fg(agent_status_color(
                 agent.agent_status,
                 super::super::attention::is_marked_inactive(agent),
+                super::super::attention::is_muted(agent),
                 palette,
             )),
         );

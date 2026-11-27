@@ -239,17 +239,19 @@ fn status_color(
     }
 }
 
-/// An inactive session is only grey while nothing about it needs you: working, blocked and unread
-/// all still show through.
+/// An idle session marked inactive is grey, and an idle muted one is white (the text colour), so
+/// neither passes for a session that finished and is waiting. Working, blocked and unread all
+/// still show through.
 fn agent_status_color(
     status: crate::api::schema::AgentStatus,
     inactive: bool,
+    muted: bool,
     palette: &Palette,
 ) -> ratatui::style::Color {
-    if inactive && status == crate::api::schema::AgentStatus::Idle {
-        palette.overlay0
-    } else {
-        status_color(status, palette)
+    match status {
+        crate::api::schema::AgentStatus::Idle if inactive => palette.overlay0,
+        crate::api::schema::AgentStatus::Idle if muted => palette.text,
+        _ => status_color(status, palette),
     }
 }
 
